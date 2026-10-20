@@ -25,7 +25,7 @@ frameworks = [
   "Vision",
   "ServiceManagement",
 ]
-swift_flags = ["-swift-version", "5"]
+swift_flags = ["-swift-version", "5", "-larchive"]
 
 [build]
 architectures = ["arm64"]

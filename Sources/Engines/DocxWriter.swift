@@ -21,7 +21,10 @@ enum ZipTool {
     }
 
     static func unzip(_ archive: URL, into directory: URL) async throws {
-        try ZipSafety.validate(archive)
+        let inspection = try ZipSafety.validate(archive)
+        guard !inspection.isEncrypted else {
+            throw SatsumaError.invalidInput("This ZIP is password protected. Use Unlock ZIP first.")
+        }
         let result = try await Shell.run("/usr/bin/ditto", ["-x", "-k", archive.path, directory.path])
         guard result.succeeded else { throw SatsumaError.toolFailed("ditto", result.stderr) }
     }

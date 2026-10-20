@@ -18,7 +18,10 @@ enum TextRenderer {
     }
 
     static func paginate(_ text: String) -> [CFRange] {
-        let attributed = attributed(text)
+        paginate(attributed(text))
+    }
+
+    static func paginate(_ attributed: NSAttributedString) -> [CFRange] {
         let framesetter = CTFramesetterCreateWithAttributedString(attributed)
         let box = CGRect(x: margin, y: margin, width: pageSize.width - margin * 2, height: pageSize.height - margin * 2)
         var ranges: [CFRange] = []
@@ -37,7 +40,10 @@ enum TextRenderer {
     }
 
     static func draw(_ text: String, range: CFRange, in context: CGContext, scale: CGFloat = 1) {
-        let attributed = attributed(text)
+        draw(attributed(text), range: range, in: context, scale: scale)
+    }
+
+    static func draw(_ attributed: NSAttributedString, range: CFRange, in context: CGContext, scale: CGFloat = 1) {
         let framesetter = CTFramesetterCreateWithAttributedString(attributed)
         let box = CGRect(x: margin, y: margin, width: pageSize.width - margin * 2, height: pageSize.height - margin * 2)
         let path = CGPath(rect: box, transform: nil)
@@ -50,12 +56,16 @@ enum TextRenderer {
     }
 
     static func writePDF(_ text: String, to url: URL) throws {
+        try writePDF(attributed(text), to: url)
+    }
+
+    static func writePDF(_ attributed: NSAttributedString, to url: URL) throws {
         guard let consumer = CGDataConsumer(url: url as CFURL) else { throw SatsumaError.encodeFailed(url.lastPathComponent) }
         var mediaBox = CGRect(origin: .zero, size: pageSize)
         guard let context = CGContext(consumer: consumer, mediaBox: &mediaBox, nil) else { throw SatsumaError.encodeFailed(url.lastPathComponent) }
-        for range in paginate(text) {
+        for range in paginate(attributed) {
             context.beginPDFPage(nil)
-            draw(text, range: range, in: context)
+            draw(attributed, range: range, in: context)
             context.endPDFPage()
         }
         context.closePDF()
@@ -82,6 +92,44 @@ enum TextRenderer {
         }
         guard let image = context.makeImage() else { throw SatsumaError.encodeFailed("image") }
         return image
+    }
+}
+
+enum MarkdownRenderer {
+    static func attributed(_ markdown: String) throws -> NSAttributedString {
+        let result = NSMutableAttributedString(string: "")
+        let lines = markdown.components(separatedBy: .newlines)
+        for (index, line) in lines.enumerated() {
+            var body = line
+            var fontSize: CGFloat = 11
+            var bold = false
+            let headingMarks = line.prefix(while: { $0 == "#" }).count
+            if (1...6).contains(headingMarks), line.dropFirst(headingMarks).hasPrefix(" ") {
+                body = String(line.dropFirst(headingMarks + 1))
+                fontSize = max(13, 23 - CGFloat(headingMarks - 1) * 2)
+                bold = true
+            } else if line.hasPrefix("- ") || line.hasPrefix("* ") {
+                body = "• " + line.dropFirst(2)
+            }
+            let parsed = body.isEmpty ? NSAttributedString(string: "") : try NSAttributedString(markdown: body,
+                options: .init(interpretedSyntax: .inlineOnlyPreservingWhitespace))
+            let paragraph = NSMutableParagraphStyle()
+            paragraph.lineSpacing = 2
+            let styled = NSMutableAttributedString(string: parsed.string)
+            parsed.enumerateAttributes(in: NSRange(location: 0, length: parsed.length)) { attributes, range, _ in
+                let intent = (attributes[NSAttributedString.Key("NSInlinePresentationIntent")] as? NSNumber)?.intValue ?? 0
+                let weight: NSFont.Weight = bold || (intent & 2 != 0) ? .bold : .regular
+                let font = (intent & 4 != 0)
+                    ? NSFont.monospacedSystemFont(ofSize: fontSize, weight: weight)
+                    : NSFont.systemFont(ofSize: fontSize, weight: weight)
+                styled.addAttributes([.font: font, .foregroundColor: NSColor.black,
+                                      .paragraphStyle: paragraph], range: range)
+                if intent & 32 != 0 { styled.addAttribute(.strikethroughStyle, value: NSUnderlineStyle.single.rawValue, range: range) }
+            }
+            result.append(styled)
+            if index < lines.count - 1 { result.append(NSAttributedString(string: "\n", attributes: [.font: NSFont.systemFont(ofSize: 11)])) }
+        }
+        return result
     }
 }
 
@@ -212,7 +260,11 @@ struct DocumentEngine: ConversionEngine {
         case .txt:
             try text.write(to: request.destination, atomically: true, encoding: .utf8)
         case .pdf:
-            try TextRenderer.writePDF(text, to: request.destination)
+            if request.sourceFormat == .md {
+                try TextRenderer.writePDF(MarkdownRenderer.attributed(text), to: request.destination)
+            } else {
+                try TextRenderer.writePDF(text, to: request.destination)
+            }
         case .jpg, .png:
             let image = try TextRenderer.renderWholeDocument(text)
             try ImageIOBridge.write(image, to: request.destination, format: request.target, quality: 0.92)

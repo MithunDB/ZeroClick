@@ -34,6 +34,14 @@ enum ArchiveActionRunner {
         }
     }
 
+    static func extractProtectedZip(_ archive: URL, password: String, to destination: URL) async throws -> URL {
+        guard FileFormat.detect(archive) == .zip else { throw SatsumaError.invalidInput("Choose a ZIP archive.") }
+        return try await OutputWriter.writeDirectoryAsync(to: destination) { staged in
+            try FileManager.default.createDirectory(at: staged, withIntermediateDirectories: true)
+            try ProtectedZipExtractor.extract(archive, into: staged, password: password)
+        }
+    }
+
     private static func uniqueStagedURL(for url: URL, in folder: URL) -> URL {
         let base = ConversionMatrix.strippedBaseName(url.lastPathComponent)
         if url.pathExtension.isEmpty {

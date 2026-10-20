@@ -28,25 +28,25 @@ struct RadialItem: Identifiable, Hashable {
     let label: String
     let detail: String
     let symbol: String
+    let disabledReason: String?
 
     var id: RadialAction { action }
-    var isEnabled: Bool {
-        if case .ai = action { return false }
-        return true
-    }
+    var isEnabled: Bool { disabledReason == nil }
 
-    init(format: FileFormat) {
+    init(format: FileFormat, disabledReason: String? = nil) {
         action = .convert(format)
         label = format.displayName
         detail = "Convert to \(format.displayName)"
         symbol = format.category.symbol
+        self.disabledReason = disabledReason
     }
 
-    init(tool: ToolID) {
+    init(tool: ToolID, disabledReason: String? = nil) {
         action = .tool(tool)
         label = tool.radialLabel
         detail = tool.title
         symbol = tool.symbol
+        self.disabledReason = disabledReason
     }
 
     init(ai: AIAction) {
@@ -54,13 +54,15 @@ struct RadialItem: Identifiable, Hashable {
         label = ai.title.uppercased()
         detail = "\(ai.title) · Coming later"
         symbol = "sparkles"
+        disabledReason = "Coming later"
     }
 
-    init(fileAction: FileAction) {
+    init(fileAction: FileAction, disabledReason: String? = nil) {
         action = .fileAction(fileAction)
         label = fileAction.title.uppercased()
         detail = fileAction.title
         symbol = fileAction.symbol
+        self.disabledReason = disabledReason
     }
 }
 
@@ -199,11 +201,11 @@ struct RadialWheelView: View {
             }
             .frame(width: rect.width, height: rect.height)
             .glassEffect(selected ? .regular.tint(Theme.accent) : .regular, in: shape)
+            .overlay(shape.stroke(selected ? (item.isEnabled ? Theme.accent : Color.secondary) : .clear, lineWidth: 3))
         }
-        .animation(.easeOut(duration: 0.12), value: highlighted)
         .accessibilityElement(children: .ignore)
         .accessibilityLabel(item.detail)
-        .accessibilityValue(item.isEnabled ? "Available" : "Coming later")
+        .accessibilityValue(item.disabledReason ?? "Available")
     }
 
     private func label(_ item: RadialItem, selected: Bool) -> some View {
@@ -219,7 +221,7 @@ struct RadialWheelView: View {
                 .minimumScaleFactor(0.6)
                 .allowsTightening(true)
             if !item.isEnabled {
-                Text("COMING LATER")
+                Text(item.disabledReason?.uppercased() ?? "UNAVAILABLE")
                     .font(.system(size: 8, weight: .bold, design: .rounded))
                     .lineLimit(1)
                     .minimumScaleFactor(0.5)
@@ -227,7 +229,7 @@ struct RadialWheelView: View {
         }
         .foregroundStyle(item.isEnabled ? (selected ? Color.white : Color.primary) : Color.secondary)
         .opacity(item.isEnabled ? 1 : 0.55)
-        .help(item.detail)
+        .help(item.disabledReason.map { "\(item.detail) · \($0)" } ?? item.detail)
         .contentTransition(.identity)
     }
 
@@ -329,9 +331,9 @@ final class RadialView: NSView {
     private func refresh() {
         let title: String
         if let highlighted, highlighted < items.count {
-            title = items[highlighted].isEnabled ? items[highlighted].label : "AI · COMING LATER"
+            title = items[highlighted].isEnabled ? items[highlighted].label : (items[highlighted].disabledReason?.uppercased() ?? "UNAVAILABLE")
         } else {
-            title = items.first?.isEnabled == false ? WheelMode.ai.centerTitle : (items.count == 1 ? items[0].label : mode.centerTitle)
+            title = items.count == 1 && items[0].isEnabled ? items[0].label : mode.centerTitle
         }
         host.rootView = RadialWheelView(
             items: items,
@@ -349,6 +351,12 @@ final class RadialView: NSView {
 
     func updateHighlight(forWindowPoint point: NSPoint) {
         highlighted = index(at: convert(point, from: nil))
+    }
+
+    func updateHighlight(forScreenPoint point: NSPoint) {
+        guard let window else { return }
+        let local = NSPoint(x: point.x - window.frame.minX, y: point.y - window.frame.minY)
+        updateHighlight(forWindowPoint: local)
     }
 
     override func draggingEntered(_ sender: NSDraggingInfo) -> NSDragOperation {

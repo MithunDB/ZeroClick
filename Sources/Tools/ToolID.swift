@@ -33,6 +33,11 @@ enum ToolID: String, CaseIterable, Identifiable {
     case organizePDF
     case splitPDF
     case unlockPDF
+    case unlockZIP
+    case hideMessage
+    case revealMessage
+    case encryptFile
+    case decryptFile
 
     var id: String { rawValue }
 
@@ -64,6 +69,11 @@ enum ToolID: String, CaseIterable, Identifiable {
         case .organizePDF: return "Organize PDF pages"
         case .splitPDF: return "Split PDF"
         case .unlockPDF: return "Unlock PDF"
+        case .unlockZIP: return "Unlock ZIP"
+        case .hideMessage: return "Hide message in PNG"
+        case .revealMessage: return "Reveal PNG message"
+        case .encryptFile: return "Encrypt file"
+        case .decryptFile: return "Decrypt file"
         }
     }
 
@@ -91,6 +101,11 @@ enum ToolID: String, CaseIterable, Identifiable {
         case .mergePDF: return "Merging"
         case .organizePDF: return "Organizing"
         case .unlockPDF: return "Unlocking"
+        case .unlockZIP: return "Unlocking"
+        case .hideMessage: return "Hiding message"
+        case .revealMessage: return "Revealing message"
+        case .encryptFile: return "Encrypting file"
+        case .decryptFile: return "Decrypting file"
         }
     }
 
@@ -118,6 +133,11 @@ enum ToolID: String, CaseIterable, Identifiable {
         case .mergePDF: return "MERGE"
         case .organizePDF: return "ORGANIZE"
         case .unlockPDF: return "UNLOCK"
+        case .unlockZIP: return "UNLOCK"
+        case .hideMessage: return "HIDE"
+        case .revealMessage: return "REVEAL"
+        case .encryptFile: return "ENCRYPT"
+        case .decryptFile: return "DECRYPT"
         }
     }
 
@@ -147,6 +167,11 @@ enum ToolID: String, CaseIterable, Identifiable {
         case .mergePDF: return "doc.on.doc.fill"
         case .organizePDF: return "rectangle.stack"
         case .unlockPDF: return "lock.open"
+        case .unlockZIP: return "lock.open"
+        case .hideMessage: return "text.below.photo.fill"
+        case .revealMessage: return "text.viewfinder"
+        case .encryptFile: return "lock.doc"
+        case .decryptFile: return "lock.open"
         }
     }
 
@@ -162,6 +187,12 @@ enum ToolID: String, CaseIterable, Identifiable {
             return [.audio]
         case .mergePDF, .organizePDF, .splitPDF, .unlockPDF:
             return [.document]
+        case .unlockZIP:
+            return [.archive]
+        case .hideMessage, .revealMessage:
+            return [.image]
+        case .encryptFile, .decryptFile:
+            return Set(FormatCategory.allCases)
         }
     }
 
@@ -181,11 +212,16 @@ enum ToolID: String, CaseIterable, Identifiable {
             switch self {
             case .mergePDF, .organizePDF, .splitPDF, .unlockPDF, .editMetadata, .compress:
                 guard formats.allSatisfy({ $0 == .pdf }) else { return false }
+            case .encryptFile:
+                break
             default:
                 return false
             }
         }
-        if category == .video, formats.contains(.gif), self != .compress, self != .editMetadata { return false }
+        if category == .archive && self != .encryptFile && (self != .unlockZIP || formats != [.zip]) { return false }
+        if self == .hideMessage || self == .revealMessage { return formats == [.png] }
+        if self == .decryptFile { return false }
+        if category == .video, formats.contains(.gif), self != .compress, self != .editMetadata, self != .encryptFile { return false }
         switch arity {
         case .single: return formats.count == 1
         case .multiple: return formats.count >= 2

@@ -53,6 +53,7 @@ final class RadialController: DragMonitorDelegate {
             self.mode = mode
             reloadItems()
         }
+        panel?.radialView.updateHighlight(forScreenPoint: point)
     }
 
     func dragMonitor(_ monitor: DragMonitor, didUpdateDraggedURLs urls: [URL]) {
@@ -147,11 +148,6 @@ final class RadialController: DragMonitorDelegate {
             return
         }
         view.subtitle = count == 1 ? urls[0].lastPathComponent : "\(count) files"
-        if mode != .actions && mode != .ai && formats.count != urls.count {
-            view.items = []
-            view.emptyMessage = "Unsupported file type"
-            return
-        }
         view.items = ActionRegistry.items(for: mode, formats: formats, urls: urls)
         view.emptyMessage = mode == .ai ? "AI · Coming later" : (mode == .tools ? "No tools for this selection" : "No conversions available")
     }

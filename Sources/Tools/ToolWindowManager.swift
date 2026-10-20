@@ -77,7 +77,7 @@ final class ToolWindowManager: NSObject, NSWindowDelegate {
 
     static func windowClass(for tool: ToolID) -> WindowClass {
         switch tool {
-        case .compress, .resizeImage, .createPDF, .mergePDF, .splitPDF, .unlockPDF, .audioChannels, .rotateImage:
+        case .compress, .resizeImage, .createPDF, .mergePDF, .splitPDF, .unlockPDF, .unlockZIP, .hideMessage, .revealMessage, .encryptFile, .decryptFile, .audioChannels, .rotateImage:
             return .compact
         case .editMetadata, .normalizeAudio, .organizePDF, .createCollage, .joinVideos, .audioToVideo, .trimAudio, .redactAudio:
             return .standard
@@ -92,7 +92,7 @@ final class ToolWindowManager: NSObject, NSWindowDelegate {
             return NSSize(width: 640, height: 560)
         case .resizeImage:
             return NSSize(width: 620, height: 400)
-        case .createPDF, .mergePDF, .unlockPDF:
+        case .createPDF, .mergePDF, .unlockPDF, .unlockZIP, .hideMessage, .revealMessage, .encryptFile, .decryptFile:
             return NSSize(width: 680, height: 440)
         case .splitPDF, .audioChannels:
             return NSSize(width: 720, height: 460)
@@ -148,6 +148,11 @@ struct ToolRootView: View {
             case .organizePDF: OrganizePDFToolView(session: session)
             case .splitPDF: SplitPDFToolView(session: session)
             case .unlockPDF: UnlockPDFToolView(session: session)
+            case .unlockZIP: UnlockZIPToolView(session: session)
+            case .hideMessage: PNGMessageToolView(session: session, revealing: false)
+            case .revealMessage: PNGMessageToolView(session: session, revealing: true)
+            case .encryptFile: SecureFileToolView(source: session.primary, decrypting: false) { ToolWindowManager.shared.close(session) }
+            case .decryptFile: SecureFileToolView(source: session.primary, decrypting: true) { ToolWindowManager.shared.close(session) }
             }
         }
         .frame(minWidth: 560, minHeight: 360)

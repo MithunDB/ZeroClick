@@ -67,12 +67,22 @@ enum FileActionRunner {
             }
         case .extractZip:
             guard let source = urls.first, FileFormat.detect(source) == .zip else { return }
+            if (try? ZipSafety.validate(source).isEncrypted) == true {
+                ToolWindowManager.shared.open(.unlockZIP, files: [source])
+                return
+            }
             let destination = ArchiveActionRunner.extractionDestination(for: source)
             JobRunner.shared.run(title: "Extracting ZIP", detail: source.lastPathComponent, symbol: "archivebox.fill") { progress in
                 let result = try await ArchiveActionRunner.extractZip(source, to: destination)
                 progress(1)
                 return [result]
             }
+        case .encrypt:
+            guard let source = urls.first else { return }
+            SecureFileWindowManager.shared.open(source, decrypting: false)
+        case .decrypt:
+            guard let source = urls.first else { return }
+            SecureFileWindowManager.shared.open(source, decrypting: true)
         }
     }
 

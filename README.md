@@ -14,11 +14,11 @@
   &nbsp;·&nbsp; <a href="#whats-inside">What's inside</a>
 </p>
 
-> **Early access:** The downloadable build is usable but still in development. Protected ZIPs, ZeroClick-created encrypted files, and PNG message hiding are planned, not included yet. The AI wheel is a disabled preview.
+> **Private local release:** The downloadable build includes the tested local tools, protected ZIP unlocking, ZeroClick-created encrypted files, PNG message hiding, and visible disabled actions. The AI wheel is a disabled preview.
 
 ZeroClick works from a Finder drag. It reads and writes files locally, with no uploads or telemetry. Conversions and editing tools save new copies; only the explicit **Move** action relocates a selected file.
 
-ZeroClick is a private local derivative of Satsuma, an open-source reimplementation of the Tangerine workflow: 190 conversion options across images, video, audio, documents, subtitles and archives, and 26 advanced file tools.
+ZeroClick is a private local derivative of Satsuma, an open-source reimplementation of the Tangerine workflow: 190 conversion options across images, video, audio, documents, subtitles and archives, and 31 advanced file tools.
 
 Password-protected PDFs can be unlocked into a separate unprotected copy. The original stays encrypted.
 
@@ -36,12 +36,12 @@ Password-protected PDFs can be unlocked into a separate unprotected copy. The or
 | **Command** | File actions | Copy Path, Duplicate, Move, ZIP, and more |
 | **Option** | AI · Coming later | Shows planned actions; nothing runs |
 
-ZeroClick requires an **Apple silicon Mac with macOS 26 or later**. The downloadable app does **not** require Brisk, Xcode, or a Git clone. Some non-native formats need optional `ffmpeg`; RAR extraction needs optional `unar`. This early-access build is ad-hoc signed, not Developer ID notarized, so macOS may ask you to approve opening it in **System Settings → Privacy & Security** on first launch.
+ZeroClick requires an **Apple silicon Mac with macOS 26 or later**. The downloadable app does **not** require Brisk, Xcode, or a Git clone. Some non-native media formats need optional `ffmpeg`; RAR decoding uses macOS `bsdtar`. This private build is ad-hoc signed, not Developer ID notarized, so macOS may ask you to approve opening it in **System Settings → Privacy & Security** on first launch.
 
 ## What's inside
 
 - **190 conversion routes** across images, audio, video, documents, subtitles, and archives.
-- **26 local tools** for editing, redaction, compression, PDF pages, and more.
+- **31 local tools** for editing, redaction, compression, PDF pages, and more.
 - **Safe outputs** with collision-resistant names, staged writes, cancellation, and operation history capped at 50 entries.
 - **Private by design:** no account, cloud processing, telemetry, or AI backend.
 
@@ -50,10 +50,10 @@ ZeroClick requires an **Apple silicon Mac with macOS 26 or later**. The download
 1. Start dragging one or more files in Finder (or any app).
 2. Hold **Shift**. A radial menu appears around the cursor with the formats the selection can be converted to.
 3. Move over a format and release to convert. Copies are written next to the originals (or to the folder chosen in Settings).
-4. Hold **Shift + Option** instead to switch the radial menu to advanced tools (Compress, Crop, Trim, Merge PDFs, …). Settings can map this wheel to **Command** instead. Releasing on a tool opens its window with a live preview.
+4. Hold **Shift + Option** instead to switch the radial menu to advanced tools (Compress, Crop, Trim, Merge PDFs, …). Settings can map this wheel to **Command** instead. The wheel shows tools relevant to the selected file category and greys out tools that cannot run on that selection. Releasing on an available tool opens its window with a live preview.
 5. Hold **Command** for local file actions. Control also maps to file actions, but a pre-held Control-click can open Finder’s context menu before dragging. Hold **Option** alone to see future AI actions marked “Coming later”; those actions cannot be selected.
 
-Keyboard: while the radial menu is open, press **Option** to toggle between formats and tools, arrow keys to choose, **Return** to apply, **Escape** to cancel.
+Keyboard: when you open the wheel through the menu-bar **Convert Files…** picker, arrow keys choose an action, **Return** applies it, and **Escape** closes it. During a Finder drag, Finder owns keyboard focus; move the pointer over a wedge to highlight it, then release to choose.
 
 ZeroClick lives in the menu bar (no Dock icon). The status item shows job progress and opens Settings.
 
@@ -75,17 +75,21 @@ The radial menu is built from Liquid Glass wedges (`glassEffect` on a custom rou
 | SRT, VTT | VTT/SRT, TXT |
 | ZIP, TAR, GZIP, RAR | ZIP, TAR, GZIP (RAR can be read, not written) |
 
-Native frameworks are used first: ImageIO/Core Graphics for images, AVFoundation for audio and video, PDFKit/Core Text for documents, Foundation for archives. `ffmpeg` is used only for formats Apple's frameworks cannot encode or decode (WebM/VP9, MKV, AVI, WMV, OGG, Opus, FLAC output, WMA, MP3 encoding, animated GIF export). `unar`/`bsdtar` extracts RAR.
+Native frameworks are used first: ImageIO/Core Graphics for images, AVFoundation for audio and video, PDFKit/Core Text for documents, Foundation for archives. `ffmpeg` is used only for formats Apple's frameworks cannot encode or decode (WebM/VP9, MKV, AVI, WMV, OGG, Opus, FLAC output, WMA, MP3 encoding, animated GIF export). macOS `bsdtar` decodes RAR into a validated TAR before extraction.
 
 ## Advanced tools
 
 | Scope | Tools |
 | --- | --- |
-| Any file | Compress (Balanced/Strong, target size, resize), Edit metadata (view, edit, strip sensitive or all fields) |
+| Any file | Compress (Balanced/Strong, target size, resize), Edit metadata (view, edit, strip sensitive or all fields), Encrypt to `.zclick`, Decrypt a ZeroClick file |
 | Images | Edit photos, Add a background, Crop, Redact, Resize, Rotate, Create a PDF, Make a collage |
 | Video | Trim, Split, Crop, Change speed, Join, Save frames, Redact |
 | Audio | Trim, Normalize volume, Convert channels, Bleep, Create an audio visualizer |
 | PDF | Merge, Organize pages, Split, Unlock protected PDF into a new copy |
+| ZIP | Unlock a password-protected archive into a new folder |
+| PNG | Hide a password-protected message in a copy, Reveal a hidden message |
+
+The Shift+Option Tools wheel and Command file-actions wheel can encrypt a selected file to a separate `.zclick` copy and decrypt ZeroClick-created files with the password. This local format uses PBKDF2-HMAC-SHA256 and AES-GCM; it is limited to 512 MB inputs and cannot open arbitrary protected file formats. Keep the password: there is no recovery service. PNG message hiding uses encrypted data in opaque pixel bits; editing, resizing, or re-saving the image may erase it. The Reveal window automatically checks for ZeroClick’s hidden-message signature before asking for a password; it does not detect every third-party steganography scheme. Neither feature uploads data.
 
 Image redaction can suggest face or text areas locally with Vision. Review and adjust the boxes before confirming export. Blur and Pixelate have per-area strength sliders from 1× to 8×; use Solid for sensitive text because blur and pixelation can leave details recoverable. Redacted output is a new copy without inherited EXIF/TIFF metadata.
 
@@ -93,7 +97,7 @@ Image redaction can suggest face or text areas locally with Vision. Review and a
 
 - Apple silicon Mac running macOS 26 or later.
 - [Brisk](https://github.com/plyght/brisk) and the Xcode command-line tools (`swiftc`) to build from source.
-- Optional: `ffmpeg` for the non-native formats listed above (`wax install ffmpeg`), `unar` for RAR extraction (`wax install unar`). ZeroClick looks in `PATH`, `/opt/homebrew/bin` and `/usr/local/bin`; a custom path can be set in Settings.
+- Optional: `ffmpeg` for the non-native media formats listed above (`wax install ffmpeg`). ZeroClick looks in `PATH`, `/opt/homebrew/bin` and `/usr/local/bin`; a custom path can be set in Settings.
 
 ```bash
 brisk build            # debug .app in .build/debug/ZeroClick.app
@@ -119,7 +123,7 @@ scripts/check.sh --fix  # apply swift-format fixes first
 
 ## Verification status
 
-Local `brisk test` passes 63/63 checks, and `brisk archive --release` produces an ad-hoc signed standalone `.brisk/Archives/ZeroClick.app`. Finder drag tests have verified conversion, PDF Tools, file-actions, the disabled AI wheel, text redaction, PDF merge/split/organize/compression, ZIP extraction, and password-protected PDF unlocking. Protected ZIPs, ZeroClick-created encrypted files, and PNG message hiding remain in development.
+Local `brisk test` passes 70/70 checks, and `brisk archive --release` produces an ad-hoc signed standalone `.brisk/Archives/ZeroClick.app`. Finder drag tests have verified conversion, PDF Tools, file-actions, the disabled AI wheel, text redaction, PDF merge/split/organize/compression, ZIP extraction, protected PDF and ZIP unlocking, `.zclick` encryption/decryption, PNG message hiding/revealing, formatted Markdown PDF output, and the drag wheel after Finder relaunch. Category-relevant disabled actions also passed Finder verification; unavailable wedges remain visible and cannot run. VoiceOver was not physically checked, and only one display was connected during testing.
 
 ## Project layout
 
@@ -131,7 +135,7 @@ Sources/Engines            Conversion engines: image, audio, video, document, su
 Sources/Operations         Tool backends: ImageOps, VideoOps, AudioOps, PDFOps, MetadataOps, Compressor
 Sources/Radial             Global drag/modifier monitor and the radial menu overlay
 Sources/Core               Job runner, progress HUD (card and notch pill), shell, media probing
-Sources/Tools              Tool window shell, tool registry and the 26 tool views
+Sources/Tools              Tool window shell, tool registry and the 31 tool views
 Tests                      Direct Swift tests run by `brisk test`
 ```
 

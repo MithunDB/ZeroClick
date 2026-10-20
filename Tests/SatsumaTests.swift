@@ -77,29 +77,38 @@ struct SatsumaTests {
             try expectEqual(ConversionMatrix.totalConversions, 190)
         }
 
-        runner.test("26 advanced tools") {
-            try expectEqual(ToolID.total, 26)
+        runner.test("31 advanced tools") {
+            try expectEqual(ToolID.total, 31)
         }
 
         runner.test("action registry filters conversion and tools") {
             let png = ActionRegistry.items(for: .convert, formats: [.png])
             try expect(png.contains { $0.action == .convert(.jpg) }, "PNG must offer JPG")
-            try expect(!png.contains { $0.action == .convert(.mp3) }, "PNG must not offer MP3")
+            try expect(!png.contains { $0.action == .convert(.mp3) }, "PNG should not show unrelated audio formats")
             let pdf = ActionRegistry.items(for: .tools, formats: [.pdf, .pdf])
             try expect(pdf.contains { $0.action == .tool(.mergePDF) }, "PDF pair must offer merge")
-            try expect(!pdf.contains { $0.action == .tool(.cropImage) }, "PDF must not offer image crop")
+            try expect(!pdf.contains { $0.action == .tool(.cropImage) }, "PDF should not show unrelated image tools")
+            try expect(pdf.contains { $0.action == .tool(.unlockPDF) && !$0.isEnabled }, "Plain PDF should show disabled Unlock PDF")
         }
 
         runner.test("mixed selections expose only common actions") {
             let mixedDocuments = ActionRegistry.items(for: .convert, formats: [.png, .pdf], ffmpegAvailable: false)
             try expect(mixedDocuments.contains { $0.action == .convert(.docx) }, "PNG and PDF both support DOCX")
-            try expect(!mixedDocuments.contains { $0.action == .convert(.png) }, "PNG cannot convert to itself even though PDF can convert to PNG")
-            try expect(ActionRegistry.items(for: .convert, formats: [.png, .mp3], ffmpegAvailable: false).isEmpty, "unrelated formats have no common conversion")
-            try expect(ActionRegistry.items(for: .tools, formats: [.png, .pdf]).isEmpty, "mixed categories must not offer single-category tools")
+            try expect(mixedDocuments.contains { $0.action == .convert(.png) && !$0.isEnabled }, "PNG self-conversion should be visible but disabled")
+            try expect(ActionRegistry.items(for: .convert, formats: [.png, .mp3], ffmpegAvailable: false).allSatisfy { !$0.isEnabled }, "unrelated formats have no enabled common conversion")
+            try expect(ActionRegistry.items(for: .tools, formats: [.png, .pdf]).allSatisfy { !$0.isEnabled }, "mixed categories have no enabled single-category tools")
             let paths = [URL(fileURLWithPath: "/tmp/photo.png"), URL(fileURLWithPath: "/tmp/song.mp3")]
             let actions = ActionRegistry.items(for: .actions, formats: [.png, .mp3], urls: paths)
             try expect(actions.contains { $0.action == .fileAction(.createZip) }, "mixed files can be archived together")
-            try expect(!actions.contains { $0.action == .fileAction(.extractZip) }, "mixed files cannot be extracted as one ZIP")
+            try expect(actions.contains { $0.action == .fileAction(.extractZip) && !$0.isEnabled }, "mixed files cannot be extracted as one ZIP")
+        }
+
+        runner.test("partly unsupported selections cannot enable conversion or tools") {
+            let paths = [URL(fileURLWithPath: "/tmp/photo.png"), URL(fileURLWithPath: "/tmp/unknown.bin")]
+            let conversions = ActionRegistry.items(for: .convert, formats: [.png], urls: paths)
+            let tools = ActionRegistry.items(for: .tools, formats: [.png], urls: paths)
+            try expect(!conversions.isEmpty && conversions.allSatisfy { !$0.isEnabled }, "Conversion must not use only the recognized subset")
+            try expect(!tools.isEmpty && tools.allSatisfy { !$0.isEnabled }, "Tools must not use only the recognized subset")
         }
 
         runner.test("redaction selection returns to newest area after background click or removal") {
@@ -112,12 +121,12 @@ struct SatsumaTests {
             try expectEqual(RedactionSelection.activeID(first.id, among: []), nil)
         }
 
-        runner.test("conversion wheel hides FFmpeg-only actions when unavailable") {
+        runner.test("conversion wheel disables FFmpeg-only actions when unavailable") {
             let nativeVideo = ActionRegistry.items(for: .convert, formats: [.mp4], ffmpegAvailable: false)
             try expect(nativeVideo.contains { $0.action == .convert(.mov) }, "native MOV should remain")
-            try expect(!nativeVideo.contains { $0.action == .convert(.mkv) }, "MKV requires FFmpeg")
-            try expect(!nativeVideo.contains { $0.action == .convert(.mp3) }, "MP3 requires FFmpeg")
-            try expect(ActionRegistry.items(for: .convert, formats: [.mkv], ffmpegAvailable: false).isEmpty, "MKV source needs FFmpeg")
+            try expect(nativeVideo.contains { $0.action == .convert(.mkv) && !$0.isEnabled }, "MKV requires FFmpeg")
+            try expect(nativeVideo.contains { $0.action == .convert(.mp3) && !$0.isEnabled }, "MP3 requires FFmpeg")
+            try expect(ActionRegistry.items(for: .convert, formats: [.mkv], ffmpegAvailable: false).allSatisfy { !$0.isEnabled }, "MKV source needs FFmpeg")
             let withFFmpeg = ActionRegistry.items(for: .convert, formats: [.mp4], ffmpegAvailable: true)
             try expect(withFFmpeg.contains { $0.action == .convert(.mkv) }, "MKV should appear with FFmpeg")
         }
@@ -153,9 +162,10 @@ struct SatsumaTests {
 
         runner.test("file actions apply to folders and unsupported types") {
             let items = ActionRegistry.items(for: .actions, formats: [])
-            try expectEqual(items.count, 6)
-            try expect(items.contains { $0.action == .fileAction(.copyPath) }, "Copy Path must be available")
-            try expect(items.contains { $0.action == .fileAction(.duplicate) }, "Duplicate must be available")
+            try expectEqual(items.count, 10)
+            try expect(items.contains { $0.action == .fileAction(.copyPath) && $0.isEnabled }, "Copy Path must be available")
+            try expect(items.contains { $0.action == .fileAction(.duplicate) && $0.isEnabled }, "Duplicate must be available")
+            try expect(items.contains { $0.action == .fileAction(.extractZip) && !$0.isEnabled }, "Extract ZIP must be visible but unavailable")
         }
 
         await runner.testAsync("ZIP action creates and extracts without replacing source") {
@@ -242,6 +252,148 @@ struct SatsumaTests {
             } catch {
                 try expect(try FileManager.default.contentsOfDirectory(atPath: repackedLinkOutput.path).isEmpty, "rejected repack must leave no files")
             }
+        }
+
+        await runner.testAsync("protected ZIP rejects wrong password and preserves its source") {
+            let folder = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+            try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
+            defer { try? FileManager.default.removeItem(at: folder) }
+            let source = folder.appendingPathComponent("secret.txt")
+            try "private fixture".write(to: source, atomically: true, encoding: .utf8)
+            let zip = folder.appendingPathComponent("protected.zip")
+            // This is a synthetic test-only password; app passwords never enter process arguments.
+            let result = try await Shell.run("/usr/bin/zip", ["-q", "-P", "test-zip-42", zip.path, source.lastPathComponent], currentDirectory: folder)
+            try expect(result.succeeded, "protected ZIP fixture creation")
+            let original = try Data(contentsOf: zip)
+            try expect(try ZipSafety.validate(zip).isEncrypted, "ZIP encryption flag must be detected")
+            try expect(ActionRegistry.items(for: .tools, formats: [.zip], urls: [zip]).contains { $0.action == .tool(.unlockZIP) }, "protected ZIP must offer unlock")
+            let wrong = folder.appendingPathComponent("wrong output")
+            do {
+                _ = try await ArchiveActionRunner.extractProtectedZip(zip, password: "wrong", to: wrong)
+                throw TestFailure(description: "wrong ZIP password was accepted")
+            } catch is TestFailure {
+                throw TestFailure(description: "wrong ZIP password was accepted")
+            } catch {
+                try expect(!FileManager.default.fileExists(atPath: wrong.path), "failed extraction left an output folder")
+            }
+            let destination = folder.appendingPathComponent("unlocked output")
+            let extracted = try await ArchiveActionRunner.extractProtectedZip(zip, password: "test-zip-42", to: destination)
+            try expectEqual(try String(contentsOf: extracted.appendingPathComponent("secret.txt"), encoding: .utf8), "private fixture")
+            try expectEqual(try Data(contentsOf: zip), original)
+        }
+
+        await runner.testAsync("AES-encrypted ZIP extracts with the correct password") {
+            let folder = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+            try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
+            defer { try? FileManager.default.removeItem(at: folder) }
+            // Tiny synthetic WinZip AES-256 fixture generated with pyzipper for this test.
+            let base64 = "UEsDBBQAAQBjAKeyU10AAAAAKAAAAAoAAAAHAAsAYWVzLnR4dAGZBwACAEFFAwgAWmMr1xZCcOUtQE8BzO5UFhEMZeJM4AmLKqp7uYJbqg9zdf9WRKqu5FBLAQIUAxQAAQBjAKeyU10AAAAAKAAAAAoAAAAHAAsAAAAAAAAAAACAAQAAAABhZXMudHh0AZkHAAIAQUUDCABQSwUGAAAAAAEAAQBAAAAAWAAAAAAA"
+            guard let bytes = Data(base64Encoded: base64) else { throw TestFailure(description: "Invalid AES fixture") }
+            let zip = folder.appendingPathComponent("aes.zip")
+            try bytes.write(to: zip)
+            try expect(try ZipSafety.validate(zip).isEncrypted, "AES ZIP must be detected as encrypted")
+            let destination = folder.appendingPathComponent("aes extracted")
+            let extracted = try await ArchiveActionRunner.extractProtectedZip(zip, password: "test-aes-42", to: destination)
+            try expectEqual(try String(contentsOf: extracted.appendingPathComponent("aes.txt"), encoding: .utf8), "AES sample")
+            try expectEqual(try Data(contentsOf: zip), bytes)
+        }
+
+        await runner.testAsync("real RAR archive extracts safely without changing its source") {
+            let fixture = URL(fileURLWithPath: #filePath).deletingLastPathComponent()
+                .appendingPathComponent("Fixtures/rar-multi-lzss-blocks.rar")
+            let bytes = try Data(contentsOf: fixture)
+            let folder = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+            try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
+            defer { try? FileManager.default.removeItem(at: folder) }
+            let extracted = folder.appendingPathComponent("extracted")
+            try FileManager.default.createDirectory(at: extracted, withIntermediateDirectories: true)
+            try await ArchiveEngine().extract(fixture, format: .rar, into: extracted)
+            let content = try Data(contentsOf: extracted.appendingPathComponent("multi_lzss_blocks_test.txt"))
+            try expectEqual(content.count, 20_131_111)
+            try expectEqual(try Data(contentsOf: fixture), bytes)
+        }
+
+        runner.test("ZeroClick encrypted file round-trips and rejects wrong password and tampering") {
+            let folder = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+            try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
+            defer { try? FileManager.default.removeItem(at: folder) }
+            let source = folder.appendingPathComponent("notes.txt")
+            let original = Data("private local notes".utf8)
+            try original.write(to: source)
+            let encrypted = folder.appendingPathComponent("notes.txt.zclick")
+            _ = try SecureFile.encrypt(source, password: "test-secret-42", to: encrypted)
+            try expect(SecureFile.isEncrypted(encrypted), "encrypted header must be detected")
+            try expect(ActionRegistry.items(for: .actions, formats: [], urls: [encrypted]).contains { $0.action == .fileAction(.decrypt) }, "encrypted file must offer decrypt")
+            try expect(ActionRegistry.items(for: .tools, formats: [], urls: [encrypted]).contains { $0.action == .tool(.decryptFile) }, "Tools wheel must offer decrypt")
+            try expect(ActionRegistry.items(for: .tools, formats: [.txt], urls: [source]).contains { $0.action == .tool(.encryptFile) }, "Tools wheel must offer encrypt")
+            try expectEqual(try Data(contentsOf: source), original)
+            do {
+                _ = try SecureFile.decrypt(encrypted, password: "wrong", into: folder)
+                throw TestFailure(description: "wrong password decrypted file")
+            } catch is TestFailure {
+                throw TestFailure(description: "wrong password decrypted file")
+            } catch {}
+            let decrypted = try SecureFile.decrypt(encrypted, password: "test-secret-42", into: folder)
+            try expectEqual(try Data(contentsOf: decrypted), original)
+            try expect(decrypted != source, "decrypted output replaced source")
+            var altered = try Data(contentsOf: encrypted)
+            altered[altered.count - 1] ^= 1
+            let tampered = folder.appendingPathComponent("tampered.zclick")
+            try altered.write(to: tampered)
+            do {
+                _ = try SecureFile.decrypt(tampered, password: "test-secret-42", into: folder)
+                throw TestFailure(description: "tampered file decrypted")
+            } catch is TestFailure {
+                throw TestFailure(description: "tampered file decrypted")
+            } catch {}
+            try expectEqual(try Data(contentsOf: source), original)
+        }
+
+        runner.test("PNG hides and reveals password-protected text without changing its source") {
+            let folder = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+            try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
+            defer { try? FileManager.default.removeItem(at: folder) }
+            let source = folder.appendingPathComponent("cover.png")
+            let image = CIImage(color: CIColor(red: 0.3, green: 0.6, blue: 0.8, alpha: 1))
+                .cropped(to: CGRect(x: 0, y: 0, width: 256, height: 256))
+            guard let cg = ImageToolSupport.cgImage(image) else { throw TestFailure(description: "Could not make PNG fixture") }
+            try ImageIOBridge.write(cg, to: source, format: .png)
+            let original = try Data(contentsOf: source)
+            let hidden = folder.appendingPathComponent("cover hidden.png")
+            _ = try PNGSteganography.hide("Meet at café ☕️", password: "test-stego-42", in: source, to: hidden)
+            try expect(try PNGSteganography.containsZeroClickMessage(hidden), "hidden copy must be identified without a password")
+            try expect(!(try PNGSteganography.containsZeroClickMessage(source)), "plain cover must not be identified as hidden")
+            try expectEqual(try PNGSteganography.reveal(from: hidden, password: "test-stego-42"), "Meet at café ☕️")
+            try expectEqual(try Data(contentsOf: source), original)
+            do {
+                _ = try PNGSteganography.reveal(from: hidden, password: "wrong")
+                throw TestFailure(description: "wrong password revealed message")
+            } catch is TestFailure {
+                throw TestFailure(description: "wrong password revealed message")
+            } catch {}
+            do {
+                _ = try PNGSteganography.reveal(from: source, password: "test-stego-42")
+                throw TestFailure(description: "cover without message reported one")
+            } catch is TestFailure {
+                throw TestFailure(description: "cover without message reported one")
+            } catch {}
+        }
+
+        runner.test("Markdown PDF renders headings and emphasis without literal markers") {
+            let folder = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+            try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
+            defer { try? FileManager.default.removeItem(at: folder) }
+            let styled = try MarkdownRenderer.attributed("# Heading\n\nA **bold** phrase and *italic* word.\n- First item")
+            try expect(styled.string.contains("Heading"), "heading text must remain")
+            try expect(!styled.string.contains("#") && !styled.string.contains("**"), "Markdown markers must be removed")
+            let headingFont = styled.attribute(.font, at: 0, effectiveRange: nil) as? NSFont
+            try expect((headingFont?.pointSize ?? 0) > 11, "heading must be visually larger")
+            let output = folder.appendingPathComponent("rendered.pdf")
+            try TextRenderer.writePDF(styled, to: output)
+            guard let document = PDFDocument(url: output), let text = document.string else {
+                throw TestFailure(description: "Markdown PDF is unreadable")
+            }
+            try expect(text.contains("Heading") && text.contains("bold") && text.contains("First item"), "rendered text is incomplete")
         }
 
         await runner.testAsync("corrupt ZIP extraction leaves source and output folder untouched") {
@@ -1060,9 +1212,11 @@ struct SatsumaTests {
             guard let lockedDocument = PDFDocument(url: locked) else { throw TestFailure(description: "Could not reopen locked fixture") }
             try expect(lockedDocument.isEncrypted && lockedDocument.isLocked, "Fixture must require a password")
             let wheel = ActionRegistry.items(for: .tools, formats: [.pdf], urls: [locked])
-            try expectEqual(wheel.map(\.action), [.tool(.unlockPDF)])
+            try expect(wheel.contains { $0.action == .tool(.unlockPDF) && $0.isEnabled }, "Protected PDF should enable Unlock")
+            try expect(wheel.contains { $0.action == .tool(.encryptFile) && $0.isEnabled }, "Protected PDF should enable Encrypt")
+            try expect(wheel.contains { $0.action == .tool(.splitPDF) && !$0.isEnabled }, "Other PDF tools should remain visible but disabled for a protected PDF")
             let normalWheel = ActionRegistry.items(for: .tools, formats: [.pdf], urls: [plain])
-            try expect(!normalWheel.contains { $0.action == .tool(.unlockPDF) }, "Normal PDF must hide Unlock")
+            try expect(normalWheel.contains { $0.action == .tool(.unlockPDF) && !$0.isEnabled }, "Normal PDF must disable Unlock")
             do {
                 _ = try OutputWriter.write(to: unlocked) { staged in
                     try PDFOps.unlock(locked, password: "wrong", to: staged)
@@ -1094,8 +1248,8 @@ struct SatsumaTests {
             try expect(!ToolID.trimVideo.applies(to: [.gif]), "gif is not trimmable")
             try expect(ToolID.compress.applies(to: [.gif]), "gif compress")
             try expect(!ToolID.mergePDF.applies(to: [.docx, .docx]), "docx merge")
-            try expectEqual(ToolID.available(for: [.mp3]).count, 7)
-            try expectEqual(ToolID.available(for: [.pdf]).count, 5)
+            try expectEqual(ToolID.available(for: [.mp3]).count, 8)
+            try expectEqual(ToolID.available(for: [.pdf]).count, 6)
         }
 
         runner.test("compression presets") {

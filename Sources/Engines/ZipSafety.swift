@@ -1,7 +1,10 @@
 import Foundation
 
 enum ZipSafety {
-    static func validate(_ archive: URL) throws {
+    struct Inspection { let isEncrypted: Bool }
+
+    @discardableResult
+    static func validate(_ archive: URL) throws -> Inspection {
         let handle = try FileHandle(forReadingFrom: archive)
         defer { try? handle.close() }
         let size = try handle.seekToEnd()
@@ -31,9 +34,11 @@ enum ZipSafety {
         guard directory.count == directorySize else { throw SatsumaError.invalidInput("Truncated ZIP directory.") }
         var position = 0
         var expanded: UInt64 = 0
+        var encrypted = false
         for _ in 0..<entries {
             guard value(directory, at: position, count: 4) == 0x02014b50,
                   let madeBy = value(directory, at: position + 4, count: 2),
+                  let flags = value(directory, at: position + 8, count: 2),
                   let uncompressed = value(directory, at: position + 24, count: 4),
                   let nameLength = value(directory, at: position + 28, count: 2),
                   let extraLength = value(directory, at: position + 30, count: 2),
@@ -56,6 +61,8 @@ enum ZipSafety {
             try handle.seek(toOffset: localOffset)
             let localHeader = try handle.read(upToCount: 30) ?? Data()
             guard value(localHeader, at: 0, count: 4) == 0x04034b50,
+                  let localFlags = value(localHeader, at: 6, count: 2),
+                  (flags & 1) == (localFlags & 1),
                   let localNameLength = value(localHeader, at: 26, count: 2),
                   let localExtraLength = value(localHeader, at: 28, count: 2),
                   localNameLength == nameLength,
@@ -65,14 +72,16 @@ enum ZipSafety {
                 throw SatsumaError.invalidInput("ZIP headers disagree on a file path.")
             }
             expanded += uncompressed
+            encrypted = encrypted || (flags & 1) != 0
             guard expanded <= 4 * 1024 * 1024 * 1024 else {
                 throw SatsumaError.invalidInput("ZIP contents exceed the extraction limit.")
             }
             position = endOfEntry
         }
+        return Inspection(isEncrypted: encrypted)
     }
 
-    private static func safeName(_ name: String) -> Bool {
+    static func safeName(_ name: String) -> Bool {
         guard !name.isEmpty, !name.hasPrefix("/"), !name.contains("\\"), !name.contains(":"),
               !name.unicodeScalars.contains(where: { $0.value < 32 }) else { return false }
         var components = name.split(separator: "/", omittingEmptySubsequences: false)
