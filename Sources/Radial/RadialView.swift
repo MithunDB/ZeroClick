@@ -200,7 +200,17 @@ struct RadialWheelView: View {
                     .position(mid)
             }
             .frame(width: rect.width, height: rect.height)
-            .glassEffect(selected ? .regular.tint(Theme.accent) : .regular, in: shape)
+            .glassEffect(.regular, in: shape)
+            // Draw the fill outside the glass effect: the system animates glass
+            // tint after the pointer has already selected the wedge.
+            .overlay(shape.fill(selected ? (item.isEnabled ? Theme.accent.opacity(0.48) : Color.secondary.opacity(0.28)) : .clear))
+            .overlay {
+                if selected {
+                    label(item, selected: true)
+                        .frame(width: geometry.labelWidth)
+                        .position(mid)
+                }
+            }
             .overlay(shape.stroke(selected ? (item.isEnabled ? Theme.accent : Color.secondary) : .clear, lineWidth: 3))
         }
         .accessibilityElement(children: .ignore)
