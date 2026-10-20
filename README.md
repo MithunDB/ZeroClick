@@ -1,10 +1,49 @@
-# ZeroClick
+<p align="center">
+  <img src="Assets.xcassets/AppIcon.appiconset/icon_256x256@2x.png" alt="ZeroClick icon" width="112">
+</p>
 
-The zero-click offline file converter for macOS. Hold **Shift** while dragging files in Finder to convert them; add **Option** to open advanced tools by default, or select **Command** for tools in Settings. Hold **Command** for file actions (or **Command + Option** when Command is assigned to tools), or **Option** alone for the disabled AI preview. Everything runs locally on your Mac; nothing is uploaded. Conversions and editing tools create new copies; the explicit Move file action relocates the selected file.
+<h1 align="center">ZeroClick</h1>
+
+<p align="center"><strong>Drop a file. Choose an action. Keep moving.</strong></p>
+
+<p align="center">A local, menu-bar file utility for Apple silicon Macs.</p>
+
+<p align="center">
+  <a href="https://github.com/MithunDB/ZeroClick/releases">⬇️ Download ZeroClick.app</a>
+  &nbsp;·&nbsp; <a href="#quick-start">Quick start</a>
+  &nbsp;·&nbsp; <a href="#whats-inside">What's inside</a>
+</p>
+
+> **Early access:** The downloadable build is usable but still in development. Protected ZIPs, ZeroClick-created encrypted files, and PNG message hiding are planned, not included yet. The AI wheel is a disabled preview.
+
+ZeroClick works from a Finder drag. It reads and writes files locally, with no uploads or telemetry. Conversions and editing tools save new copies; only the explicit **Move** action relocates a selected file.
 
 ZeroClick is a private local derivative of Satsuma, an open-source reimplementation of the Tangerine workflow: 190 conversion options across images, video, audio, documents, subtitles and archives, and 26 advanced file tools.
 
-Local security roadmap: password-protected PDFs can be unlocked into a separate unprotected copy. Protected ZIP extraction is next, followed by ZeroClick-created encrypted files and PNG message hiding. Those later features are planned and are not available in the current build.
+Password-protected PDFs can be unlocked into a separate unprotected copy. The original stays encrypted.
+
+## Quick start
+
+1. Open [Releases](https://github.com/MithunDB/ZeroClick/releases) and download the **ZeroClick-macOS-arm64.zip** asset. The automatic GitHub “Source code” archives contain source, not the app.
+2. Unzip it, then move **ZeroClick.app** to Applications.
+3. Open the app. It lives in the menu bar, so it will not add a Dock icon.
+4. Start dragging a file in Finder and hold a modifier to show a wheel:
+
+| Hold while dragging | Wheel | What it does |
+| --- | --- | --- |
+| **Shift** | Convert | Convert to compatible formats |
+| **Shift + Option** | Tools | Open editors, compression, PDF tools, and more |
+| **Command** | File actions | Copy Path, Duplicate, Move, ZIP, and more |
+| **Option** | AI · Coming later | Shows planned actions; nothing runs |
+
+ZeroClick requires an **Apple silicon Mac with macOS 26 or later**. The downloadable app does **not** require Brisk, Xcode, or a Git clone. Some non-native formats need optional `ffmpeg`; RAR extraction needs optional `unar`. This early-access build is ad-hoc signed, not Developer ID notarized, so macOS may ask you to approve opening it in **System Settings → Privacy & Security** on first launch.
+
+## What's inside
+
+- **190 conversion routes** across images, audio, video, documents, subtitles, and archives.
+- **26 local tools** for editing, redaction, compression, PDF pages, and more.
+- **Safe outputs** with collision-resistant names, staged writes, cancellation, and operation history capped at 50 entries.
+- **Private by design:** no account, cloud processing, telemetry, or AI backend.
 
 ## How it works
 
@@ -50,13 +89,11 @@ Native frameworks are used first: ImageIO/Core Graphics for images, AVFoundation
 
 Image redaction can suggest face or text areas locally with Vision. Review and adjust the boxes before confirming export. Blur and Pixelate have per-area strength sliders from 1× to 8×; use Solid for sensitive text because blur and pixelation can leave details recoverable. Redacted output is a new copy without inherited EXIF/TIFF metadata.
 
-## Requirements
+## Build from source
 
 - Apple silicon Mac running macOS 26 or later.
-- [Brisk](https://github.com/plyght/brisk) and the Xcode command-line tools (`swiftc`) to build.
+- [Brisk](https://github.com/plyght/brisk) and the Xcode command-line tools (`swiftc`) to build from source.
 - Optional: `ffmpeg` for the non-native formats listed above (`wax install ffmpeg`), `unar` for RAR extraction (`wax install unar`). ZeroClick looks in `PATH`, `/opt/homebrew/bin` and `/usr/local/bin`; a custom path can be set in Settings.
-
-## Build
 
 ```bash
 brisk build            # debug .app in .build/debug/ZeroClick.app
@@ -82,7 +119,7 @@ scripts/check.sh --fix  # apply swift-format fixes first
 
 ## Verification status
 
-Local `brisk test` currently passes 59/59 checks, and `brisk archive --release` produces a signed standalone `.brisk/Archives/ZeroClick.app`. Finder drag tests have verified the conversion, PDF Tools, file-actions, and disabled AI wheels, plus a successful text-redaction copy. The newest Blur/Pixelate slider build awaits physical UI verification. See `docs/PROJECT_STATUS.md` for the current test record and remaining checks.
+Local `brisk test` passes 63/63 checks, and `brisk archive --release` produces an ad-hoc signed standalone `.brisk/Archives/ZeroClick.app`. Finder drag tests have verified conversion, PDF Tools, file-actions, the disabled AI wheel, text redaction, PDF merge/split/organize/compression, ZIP extraction, and password-protected PDF unlocking. Protected ZIPs, ZeroClick-created encrypted files, and PNG message hiding remain in development.
 
 ## Project layout
 
