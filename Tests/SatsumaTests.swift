@@ -1,0 +1,1125 @@
+import AppKit
+import CoreImage
+import Foundation
+import PDFKit
+
+struct TestFailure: Error, CustomStringConvertible {
+    let description: String
+}
+
+final class TestRunner {
+    private var failures: [String] = []
+    private var count = 0
+
+    func test(_ name: String, _ body: () throws -> Void) {
+        count += 1
+        do {
+            try body()
+            print("  ok   \(name)")
+        } catch {
+            failures.append("\(name): \(error)")
+            print("  FAIL \(name): \(error)")
+        }
+    }
+
+    func testAsync(_ name: String, _ body: () async throws -> Void) async {
+        count += 1
+        do {
+            try await body()
+            print("  ok   \(name)")
+        } catch {
+            failures.append("\(name): \(error)")
+            print("  FAIL \(name): \(error)")
+        }
+    }
+
+    func finish() -> Never {
+        print("\n\(count - failures.count)/\(count) passed")
+        exit(failures.isEmpty ? 0 : 1)
+    }
+}
+
+func expect(_ condition: Bool, _ message: String, file: String = #fileID, line: Int = #line) throws {
+    if !condition { throw TestFailure(description: "\(message) (\(file):\(line))") }
+}
+
+func expectEqual<T: Equatable>(_ a: T, _ b: T, _ message: String = "", file: String = #fileID, line: Int = #line) throws {
+    if a != b { throw TestFailure(description: "\(message) expected \(b), got \(a) (\(file):\(line))") }
+}
+
+struct TestConversionEngine: ConversionEngine {
+    enum Behavior { case write, missingOutput, emptyDirectory, waitForCancellation }
+    let behavior: Behavior
+
+    func supports(from: FileFormat, to: FileFormat) -> Bool { true }
+
+    func convert(_ request: ConversionRequest) async throws {
+        switch behavior {
+        case .write:
+            try Data("new output".utf8).write(to: request.destination)
+        case .missingOutput:
+            break
+        case .emptyDirectory:
+            try FileManager.default.createDirectory(at: request.destination, withIntermediateDirectories: false)
+        case .waitForCancellation:
+            try Data("partial".utf8).write(to: request.destination)
+            try await Task.sleep(nanoseconds: 2_000_000_000)
+        }
+    }
+}
+
+@main
+struct SatsumaTests {
+    static func main() async {
+        let runner = TestRunner()
+
+        runner.test("conversion matrix has 190 options") {
+            try expectEqual(ConversionMatrix.totalConversions, 190)
+        }
+
+        runner.test("26 advanced tools") {
+            try expectEqual(ToolID.total, 26)
+        }
+
+        runner.test("action registry filters conversion and tools") {
+            let png = ActionRegistry.items(for: .convert, formats: [.png])
+            try expect(png.contains { $0.action == .convert(.jpg) }, "PNG must offer JPG")
+            try expect(!png.contains { $0.action == .convert(.mp3) }, "PNG must not offer MP3")
+            let pdf = ActionRegistry.items(for: .tools, formats: [.pdf, .pdf])
+            try expect(pdf.contains { $0.action == .tool(.mergePDF) }, "PDF pair must offer merge")
+            try expect(!pdf.contains { $0.action == .tool(.cropImage) }, "PDF must not offer image crop")
+        }
+
+        runner.test("mixed selections expose only common actions") {
+            let mixedDocuments = ActionRegistry.items(for: .convert, formats: [.png, .pdf], ffmpegAvailable: false)
+            try expect(mixedDocuments.contains { $0.action == .convert(.docx) }, "PNG and PDF both support DOCX")
+            try expect(!mixedDocuments.contains { $0.action == .convert(.png) }, "PNG cannot convert to itself even though PDF can convert to PNG")
+            try expect(ActionRegistry.items(for: .convert, formats: [.png, .mp3], ffmpegAvailable: false).isEmpty, "unrelated formats have no common conversion")
+            try expect(ActionRegistry.items(for: .tools, formats: [.png, .pdf]).isEmpty, "mixed categories must not offer single-category tools")
+            let paths = [URL(fileURLWithPath: "/tmp/photo.png"), URL(fileURLWithPath: "/tmp/song.mp3")]
+            let actions = ActionRegistry.items(for: .actions, formats: [.png, .mp3], urls: paths)
+            try expect(actions.contains { $0.action == .fileAction(.createZip) }, "mixed files can be archived together")
+            try expect(!actions.contains { $0.action == .fileAction(.extractZip) }, "mixed files cannot be extracted as one ZIP")
+        }
+
+        runner.test("redaction selection returns to newest area after background click or removal") {
+            let first = RectangleOverlay(id: UUID(), rect: CGRect(x: 0, y: 0, width: 10, height: 10), color: .orange, label: "1")
+            let top = RectangleOverlay(id: UUID(), rect: CGRect(x: 20, y: 20, width: 10, height: 10), color: .orange, label: "2")
+            try expectEqual(RedactionSelection.activeID(nil, among: [first, top]), top.id)
+            try expectEqual(RedactionSelection.activeID(first.id, among: [first, top]), first.id)
+            try expectEqual(RedactionSelection.activeID(first.id, among: [first, top], newlyAdded: [top.id]), top.id)
+            try expectEqual(RedactionSelection.activeID(top.id, among: [first]), first.id)
+            try expectEqual(RedactionSelection.activeID(first.id, among: []), nil)
+        }
+
+        runner.test("conversion wheel hides FFmpeg-only actions when unavailable") {
+            let nativeVideo = ActionRegistry.items(for: .convert, formats: [.mp4], ffmpegAvailable: false)
+            try expect(nativeVideo.contains { $0.action == .convert(.mov) }, "native MOV should remain")
+            try expect(!nativeVideo.contains { $0.action == .convert(.mkv) }, "MKV requires FFmpeg")
+            try expect(!nativeVideo.contains { $0.action == .convert(.mp3) }, "MP3 requires FFmpeg")
+            try expect(ActionRegistry.items(for: .convert, formats: [.mkv], ffmpegAvailable: false).isEmpty, "MKV source needs FFmpeg")
+            let withFFmpeg = ActionRegistry.items(for: .convert, formats: [.mp4], ffmpegAvailable: true)
+            try expect(withFFmpeg.contains { $0.action == .convert(.mkv) }, "MKV should appear with FFmpeg")
+        }
+
+        runner.test("AI actions are visible and disabled") {
+            let items = ActionRegistry.items(for: .ai, formats: [.png])
+            try expectEqual(items.count, 6)
+            try expect(items.allSatisfy { !$0.isEnabled && $0.detail.contains("Coming later") }, "AI actions must remain disabled")
+        }
+
+        runner.test("tools wheel modifier mapping preserves both choices") {
+            try expectEqual(DragMonitor.wheelMode(for: [.shift, .option], toolsModifier: .shiftOption), .tools)
+            try expectEqual(DragMonitor.wheelMode(for: [.command], toolsModifier: .shiftOption), .actions)
+            try expectEqual(DragMonitor.wheelMode(for: [.command], toolsModifier: .command), .tools)
+            try expectEqual(DragMonitor.wheelMode(for: [.command, .option], toolsModifier: .command), .actions)
+            try expectEqual(DragMonitor.wheelMode(for: [.shift], toolsModifier: .command), .convert)
+            try expectEqual(DragMonitor.wheelMode(for: [.option], toolsModifier: .command), .ai)
+            try expectEqual(DragMonitor.wheelMode(for: [.control], toolsModifier: .command), .actions)
+        }
+
+        runner.test("wheel modes have distinct center labels") {
+            try expectEqual(WheelMode.convert.centerTitle, "CONVERT")
+            try expectEqual(WheelMode.tools.centerTitle, "TOOLS")
+            try expectEqual(WheelMode.actions.centerTitle, "FILE ACTIONS")
+            try expectEqual(WheelMode.ai.centerTitle, "AI · COMING LATER")
+        }
+
+        runner.test("long Finder drags cancel beyond the wheel intent radius") {
+            let origin = NSPoint(x: 100, y: 100)
+            try expect(!DragMonitor.exceedsIntentDistance(from: origin, to: NSPoint(x: 100, y: 399)), "wheel range should remain usable")
+            try expect(DragMonitor.exceedsIntentDistance(from: origin, to: NSPoint(x: 100, y: 401)), "long drag must cancel")
+        }
+
+        runner.test("file actions apply to folders and unsupported types") {
+            let items = ActionRegistry.items(for: .actions, formats: [])
+            try expectEqual(items.count, 6)
+            try expect(items.contains { $0.action == .fileAction(.copyPath) }, "Copy Path must be available")
+            try expect(items.contains { $0.action == .fileAction(.duplicate) }, "Duplicate must be available")
+        }
+
+        await runner.testAsync("ZIP action creates and extracts without replacing source") {
+            let folder = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+            try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
+            defer { try? FileManager.default.removeItem(at: folder) }
+            let source = folder.appendingPathComponent("notes.txt")
+            try "hello archive".write(to: source, atomically: true, encoding: .utf8)
+            let destination = ArchiveActionRunner.zipDestination(for: [source])
+            let zip = try await ArchiveActionRunner.createZip(from: [source], to: destination)
+            try expectEqual(FileFormat.detect(zip), .zip)
+            let originalArchive = try Data(contentsOf: zip)
+            do {
+                try await ZipTool.zip(directory: folder, to: zip)
+                throw TestFailure(description: "ZIP writer replaced existing archive")
+            } catch is TestFailure {
+                throw TestFailure(description: "ZIP writer replaced existing archive")
+            } catch {
+                try expectEqual(try Data(contentsOf: zip), originalArchive)
+            }
+            try expect(ArchiveActionRunner.zipDestination(for: [source]) != zip, "repeat must choose another name")
+            let extracted = try await ArchiveActionRunner.extractZip(zip, to: ArchiveActionRunner.extractionDestination(for: zip))
+            try expectEqual(try String(contentsOf: extracted.appendingPathComponent("notes.txt"), encoding: .utf8), "hello archive")
+            let repackedOutput = folder.appendingPathComponent("repacked output")
+            try FileManager.default.createDirectory(at: repackedOutput, withIntermediateDirectories: true)
+            try await ArchiveEngine().extract(zip, format: .rar, into: repackedOutput)
+            try expectEqual(try String(contentsOf: repackedOutput.appendingPathComponent("notes.txt"), encoding: .utf8), "hello archive")
+            try expectEqual(try String(contentsOf: source, encoding: .utf8), "hello archive")
+            try expect(ActionRegistry.items(for: .actions, formats: [.zip], urls: [zip]).contains { $0.action == .fileAction(.extractZip) }, "ZIP must offer extraction")
+
+            var hostile = try Data(contentsOf: zip)
+            let filename = Data("notes.txt".utf8)
+            let replacement = Data("../a.txt/".utf8)
+            guard let nameRange = hostile.range(of: filename, options: .backwards) else {
+                throw TestFailure(description: "ZIP central filename missing")
+            }
+            hostile.replaceSubrange(nameRange, with: replacement)
+            let hostileURL = folder.appendingPathComponent("hostile.zip")
+            try hostile.write(to: hostileURL)
+            let rejectedDestination = folder.appendingPathComponent("hostile extracted")
+            do {
+                _ = try await ArchiveActionRunner.extractZip(hostileURL, to: rejectedDestination)
+                throw TestFailure(description: "parent path was accepted")
+            } catch is TestFailure {
+                throw TestFailure(description: "parent path was accepted")
+            } catch {
+                try expect(!FileManager.default.fileExists(atPath: rejectedDestination.path), "rejected ZIP must leave no output")
+            }
+
+            var mismatched = originalArchive
+            guard let localRange = mismatched.range(of: filename) else {
+                throw TestFailure(description: "ZIP local filename missing")
+            }
+            mismatched.replaceSubrange(localRange, with: replacement)
+            let mismatchURL = folder.appendingPathComponent("mismatch.zip")
+            try mismatched.write(to: mismatchURL)
+            do {
+                try ZipSafety.validate(mismatchURL)
+                throw TestFailure(description: "mismatched ZIP headers were accepted")
+            } catch is TestFailure {
+                throw TestFailure(description: "mismatched ZIP headers were accepted")
+            } catch {}
+
+            let link = folder.appendingPathComponent("shortcut")
+            try FileManager.default.createSymbolicLink(at: link, withDestinationURL: source)
+            let linkArchive = folder.appendingPathComponent("link.zip")
+            let linkZip = try await Shell.run("/usr/bin/zip", ["-y", "-q", linkArchive.path, link.lastPathComponent], currentDirectory: folder)
+            try expect(linkZip.succeeded, "symlink ZIP fixture")
+            do {
+                _ = try await ArchiveActionRunner.extractZip(linkArchive, to: folder.appendingPathComponent("link output"))
+                throw TestFailure(description: "symlink ZIP was accepted")
+            } catch is TestFailure {
+                throw TestFailure(description: "symlink ZIP was accepted")
+            } catch {
+                try expect(!FileManager.default.fileExists(atPath: folder.appendingPathComponent("link output").path), "rejected symlink ZIP must leave no output")
+            }
+            let repackedLinkOutput = folder.appendingPathComponent("repacked link output")
+            try FileManager.default.createDirectory(at: repackedLinkOutput, withIntermediateDirectories: true)
+            do {
+                try await ArchiveEngine().extract(linkArchive, format: .rar, into: repackedLinkOutput)
+                throw TestFailure(description: "repacked symlink was accepted")
+            } catch is TestFailure {
+                throw TestFailure(description: "repacked symlink was accepted")
+            } catch {
+                try expect(try FileManager.default.contentsOfDirectory(atPath: repackedLinkOutput.path).isEmpty, "rejected repack must leave no files")
+            }
+        }
+
+        await runner.testAsync("corrupt ZIP extraction leaves source and output folder untouched") {
+            let folder = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+            try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
+            defer { try? FileManager.default.removeItem(at: folder) }
+            let source = folder.appendingPathComponent("broken.zip")
+            let destination = folder.appendingPathComponent("broken extracted")
+            let bytes = Data("not a ZIP archive".utf8)
+            try bytes.write(to: source)
+            do {
+                _ = try await ArchiveActionRunner.extractZip(source, to: destination)
+                throw TestFailure(description: "Corrupt ZIP was extracted")
+            } catch is TestFailure {
+                throw TestFailure(description: "Corrupt ZIP was extracted")
+            } catch {
+                try expect(!FileManager.default.fileExists(atPath: destination.path), "Corrupt ZIP left an output folder")
+                try expectEqual(try Data(contentsOf: source), bytes)
+            }
+        }
+
+        await runner.testAsync("raw GZIP extracts binary content without a shell") {
+            let folder = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+            try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
+            defer { try? FileManager.default.removeItem(at: folder) }
+            let source = folder.appendingPathComponent("payload.bin")
+            let archive = folder.appendingPathComponent("payload.bin.gz")
+            let output = folder.appendingPathComponent("out")
+            let content = Data([0, 1, 2, 255, 0, 42])
+            try content.write(to: source)
+            let packed = try await Shell.runToFile("/usr/bin/gzip", ["-c", source.path], output: archive)
+            try expect(packed.succeeded, "gzip fixture creation")
+            try FileManager.default.createDirectory(at: output, withIntermediateDirectories: true)
+            try await ArchiveEngine().extract(archive, format: .gz, into: output)
+            try expectEqual(try Data(contentsOf: output.appendingPathComponent("payload.bin")), content)
+        }
+
+        await runner.testAsync("TAR preflight accepts files and rejects links") {
+            let folder = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+            try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
+            defer { try? FileManager.default.removeItem(at: folder) }
+            let source = folder.appendingPathComponent("safe.txt")
+            try "safe".write(to: source, atomically: true, encoding: .utf8)
+            let archive = folder.appendingPathComponent("safe.tar")
+            let packed = try await Shell.run("/usr/bin/tar", ["-cf", archive.path, "-C", folder.path, source.lastPathComponent])
+            try expect(packed.succeeded, "TAR fixture")
+            try TarSafety.validate(archive)
+            let output = folder.appendingPathComponent("output")
+            try FileManager.default.createDirectory(at: output, withIntermediateDirectories: true)
+            try await ArchiveEngine().extract(archive, format: .tar, into: output)
+            try expectEqual(try String(contentsOf: output.appendingPathComponent("safe.txt"), encoding: .utf8), "safe")
+            let gzipArchive = folder.appendingPathComponent("safe.tar.gz")
+            let compressed = try await Shell.runToFile("/usr/bin/gzip", ["-c", archive.path], output: gzipArchive)
+            try expect(compressed.succeeded, "TAR.GZ fixture")
+            let gzipOutput = folder.appendingPathComponent("gzip output")
+            try FileManager.default.createDirectory(at: gzipOutput, withIntermediateDirectories: true)
+            try await ArchiveEngine().extract(gzipArchive, format: .gz, into: gzipOutput)
+            try expectEqual(try String(contentsOf: gzipOutput.appendingPathComponent("safe.txt"), encoding: .utf8), "safe")
+            let link = folder.appendingPathComponent("link")
+            try FileManager.default.createSymbolicLink(at: link, withDestinationURL: source)
+            let linkArchive = folder.appendingPathComponent("link.tar")
+            let linkPacked = try await Shell.run("/usr/bin/tar", ["-cf", linkArchive.path, "-C", folder.path, link.lastPathComponent])
+            try expect(linkPacked.succeeded, "link TAR fixture")
+            do {
+                try TarSafety.validate(linkArchive)
+                throw TestFailure(description: "TAR link was accepted")
+            } catch is TestFailure {
+                throw TestFailure(description: "TAR link was accepted")
+            } catch {}
+        }
+
+        runner.test("duplicate names do not replace originals") {
+            let folder = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+            try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
+            defer { try? FileManager.default.removeItem(at: folder) }
+            let original = folder.appendingPathComponent("report.txt")
+            try Data("original".utf8).write(to: original)
+            let first = FileActionRunner.duplicateDestination(for: original)
+            try expectEqual(first.lastPathComponent, "report copy.txt")
+            try Data("earlier copy".utf8).write(to: first)
+            let second = FileActionRunner.duplicateDestination(for: original)
+            try expectEqual(second.lastPathComponent, "report copy 2.txt")
+            try expectEqual(String(data: try Data(contentsOf: original), encoding: .utf8), "original")
+        }
+
+        runner.test("operation history persists outcomes and newest-first order") {
+            let folder = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+            try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
+            defer { try? FileManager.default.removeItem(at: folder) }
+            let path = folder.appendingPathComponent("history.json")
+            let first = JobRecord(id: UUID(), date: Date(), title: "Converting", detail: "a.txt", outcome: .done, outputs: [folder.appendingPathComponent("a.pdf")], error: nil)
+            let second = JobRecord(id: UUID(), date: Date(), title: "Extracting", detail: "bad.zip", outcome: .failed, outputs: [], error: "Unsafe ZIP")
+            _ = try JobHistory.append(first, to: path)
+            let records = try JobHistory.append(second, to: path)
+            try expectEqual(records.map(\.id), [second.id, first.id])
+            try expectEqual(JobHistory.load(from: path), records)
+        }
+
+        runner.test("operation history can remove entries and retains only 50") {
+            let folder = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+            try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
+            defer { try? FileManager.default.removeItem(at: folder) }
+            let path = folder.appendingPathComponent("history.json")
+            let output = folder.appendingPathComponent("keep.pdf")
+            try Data("keep".utf8).write(to: output)
+            var ids: [UUID] = []
+            for number in 0..<52 {
+                let id = UUID()
+                ids.append(id)
+                let record = JobRecord(id: id, date: Date(), title: "Job \(number)", detail: "input.txt", outcome: .done, outputs: [output], error: nil)
+                _ = try JobHistory.append(record, to: path)
+            }
+            try expectEqual(JobHistory.load(from: path).count, 50)
+            try expectEqual(JobHistory.load(from: path).first?.id, ids[51])
+            try expectEqual(JobHistory.load(from: path).last?.id, ids[2])
+            let remaining = try JobHistory.remove(ids: [ids[51]], from: path)
+            try expectEqual(remaining.count, 49)
+            try expectEqual(remaining.first?.id, ids[50])
+            try expectEqual(try JobHistory.clear(from: path).count, 0)
+            try expectEqual(JobHistory.load(from: path).count, 0)
+            try expectEqual(try Data(contentsOf: output), Data("keep".utf8))
+        }
+
+        runner.test("loading old history compacts the saved file") {
+            let folder = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+            try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
+            defer { try? FileManager.default.removeItem(at: folder) }
+            let path = folder.appendingPathComponent("history.json")
+            let legacy = (0..<55).map { number in
+                JobRecord(id: UUID(), date: Date(), title: "Job \(number)", detail: "input.txt", outcome: .done, outputs: [], error: nil)
+            }
+            try JSONEncoder().encode(legacy).write(to: path)
+            let retained = JobHistory.load(from: path)
+            try expectEqual(retained.count, 50)
+            try expectEqual(retained.first?.id, legacy.first?.id)
+            try expectEqual(retained.last?.id, legacy[49].id)
+            let onDisk = try JSONDecoder().decode([JobRecord].self, from: Data(contentsOf: path))
+            try expectEqual(onDisk, retained)
+        }
+
+        runner.test("media exporter never removes an occupied destination") {
+            let folder = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+            try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
+            defer { try? FileManager.default.removeItem(at: folder) }
+            let output = folder.appendingPathComponent("original.mov")
+            let bytes = Data("keep this".utf8)
+            try bytes.write(to: output)
+            do {
+                try AVExporter.requireVacant(output)
+                throw TestFailure(description: "occupied media output accepted")
+            } catch is TestFailure {
+                throw TestFailure(description: "occupied media output accepted")
+            } catch {
+                try expectEqual(try Data(contentsOf: output), bytes)
+            }
+        }
+
+        await runner.testAsync("binary process output refuses occupied files") {
+            let folder = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+            try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
+            defer { try? FileManager.default.removeItem(at: folder) }
+            let output = folder.appendingPathComponent("occupied.bin")
+            let bytes = Data("unchanged".utf8)
+            try bytes.write(to: output)
+            do {
+                _ = try await Shell.runToFile("/usr/bin/true", [], output: output)
+                throw TestFailure(description: "binary output replaced occupied file")
+            } catch is TestFailure {
+                throw TestFailure(description: "binary output replaced occupied file")
+            } catch {
+                try expectEqual(try Data(contentsOf: output), bytes)
+            }
+        }
+
+        await runner.testAsync("cancelled queue wait releases promptly without taking a slot") {
+            let semaphore = AsyncSemaphore(limit: 1)
+            try expect(await semaphore.wait(), "first job should acquire slot")
+            let queued = Task { await semaphore.wait() }
+            await Task.yield()
+            queued.cancel()
+            try expect(!(await queued.value), "cancelled waiter must return without a signal")
+            await semaphore.signal()
+            try expect(await semaphore.wait(), "next job should acquire released slot")
+            await semaphore.signal()
+        }
+
+        await runner.testAsync("conversion never overwrites occupied output") {
+            let folder = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+            try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
+            defer { try? FileManager.default.removeItem(at: folder) }
+            let source = folder.appendingPathComponent("source.txt")
+            let destination = folder.appendingPathComponent("source.srt")
+            try Data("original".utf8).write(to: source)
+            try Data("occupied".utf8).write(to: destination)
+            let request = ConversionRequest(source: source, sourceFormat: .txt, target: .srt, destination: destination, progress: { _ in })
+            do {
+                _ = try await Engines.convert(request, using: TestConversionEngine(behavior: .write))
+                throw TestFailure(description: "conversion unexpectedly replaced occupied output")
+            } catch is TestFailure {
+                throw TestFailure(description: "conversion unexpectedly replaced occupied output")
+            } catch {}
+            try expectEqual(String(data: try Data(contentsOf: destination), encoding: .utf8), "occupied")
+            try expectEqual(String(data: try Data(contentsOf: source), encoding: .utf8), "original")
+            try expectEqual(try FileManager.default.contentsOfDirectory(atPath: folder.path).count, 2)
+        }
+
+        await runner.testAsync("failed and cancelled conversions remove staged output") {
+            let folder = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+            try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
+            defer { try? FileManager.default.removeItem(at: folder) }
+            let source = folder.appendingPathComponent("source.txt")
+            let destination = folder.appendingPathComponent("source.srt")
+            try Data("original".utf8).write(to: source)
+            let request = ConversionRequest(source: source, sourceFormat: .txt, target: .srt, destination: destination, progress: { _ in })
+            do {
+                _ = try await Engines.convert(request, using: TestConversionEngine(behavior: .missingOutput))
+                throw TestFailure(description: "missing output was reported as success")
+            } catch is TestFailure {
+                throw TestFailure(description: "missing output was reported as success")
+            } catch {}
+            do {
+                _ = try await Engines.convert(request, using: TestConversionEngine(behavior: .emptyDirectory))
+                throw TestFailure(description: "empty directory was reported as success")
+            } catch is TestFailure {
+                throw TestFailure(description: "empty directory was reported as success")
+            } catch {}
+            let task = Task { try await Engines.convert(request, using: TestConversionEngine(behavior: .waitForCancellation)) }
+            try await Task.sleep(nanoseconds: 100_000_000)
+            task.cancel()
+            _ = try? await task.value
+            try expectEqual(try FileManager.default.contentsOfDirectory(atPath: folder.path), ["source.txt"])
+        }
+
+        runner.test("output writer preserves occupied files and cleans failures") {
+            let folder = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+            try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
+            defer { try? FileManager.default.removeItem(at: folder) }
+            let destination = folder.appendingPathComponent("merged.pdf")
+            try Data("occupied".utf8).write(to: destination)
+            do {
+                _ = try OutputWriter.write(to: destination) { staged in
+                    try Data("new result".utf8).write(to: staged)
+                }
+                throw TestFailure(description: "occupied output was replaced")
+            } catch is TestFailure {
+                throw TestFailure(description: "occupied output was replaced")
+            } catch {}
+            try expectEqual(String(data: try Data(contentsOf: destination), encoding: .utf8), "occupied")
+            try expectEqual(try FileManager.default.contentsOfDirectory(atPath: folder.path), ["merged.pdf"])
+            do {
+                _ = try OutputWriter.write(to: folder.appendingPathComponent("failed.pdf")) { staged in
+                    try Data("partial".utf8).write(to: staged)
+                    throw SatsumaError.cancelled
+                }
+                throw TestFailure(description: "failed output was published")
+            } catch is TestFailure {
+                throw TestFailure(description: "failed output was published")
+            } catch {}
+            try expectEqual(try FileManager.default.contentsOfDirectory(atPath: folder.path), ["merged.pdf"])
+        }
+
+        runner.test("out-of-space write failure leaves no published or staged output") {
+            let folder = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+            try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
+            defer { try? FileManager.default.removeItem(at: folder) }
+            let source = folder.appendingPathComponent("source.txt")
+            let original = Data("keep original".utf8)
+            try original.write(to: source)
+            let destination = folder.appendingPathComponent("source.pdf")
+            do {
+                _ = try OutputWriter.write(to: destination) { staged in
+                    try Data("partial".utf8).write(to: staged)
+                    throw POSIXError(.ENOSPC)
+                }
+                throw TestFailure(description: "out-of-space write was reported as success")
+            } catch let error as POSIXError where error.code == .ENOSPC {
+                // A partial file can exist briefly, but must not survive the failure.
+            }
+            try expectEqual(try Data(contentsOf: source), original)
+            try expectEqual(try FileManager.default.contentsOfDirectory(atPath: folder.path), ["source.txt"])
+        }
+
+        runner.test("PDF split publishes a complete new folder") {
+            let folder = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+            try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
+            defer { try? FileManager.default.removeItem(at: folder) }
+            let source = folder.appendingPathComponent("source.pdf")
+            try TextRenderer.writePDF("First page", to: source)
+            let destination = folder.appendingPathComponent("source pages", isDirectory: true)
+            let published = try OutputWriter.writeDirectory(to: destination) { staged in
+                _ = try PDFOps.split(source, mode: .everyPage, every: 1, ranges: "", into: staged)
+            }
+            let files = try FileManager.default.contentsOfDirectory(at: published, includingPropertiesForKeys: nil)
+            try expectEqual(files.count, 1)
+            try expectEqual(PDFDocument(url: files[0])?.pageCount, 1)
+            try expectEqual(PDFDocument(url: source)?.pageCount, 1)
+        }
+
+        runner.test("PDF merge preserves input order and source documents") {
+            let folder = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+            try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
+            defer { try? FileManager.default.removeItem(at: folder) }
+            let first = folder.appendingPathComponent("first.pdf")
+            let second = folder.appendingPathComponent("second.pdf")
+            let merged = folder.appendingPathComponent("merged.pdf")
+            try TextRenderer.writePDF("First document", to: first)
+            try TextRenderer.writePDF("Second document", to: second)
+            let firstBytes = try Data(contentsOf: first)
+            let secondBytes = try Data(contentsOf: second)
+            let published = try OutputWriter.write(to: merged) { staged in
+                try PDFOps.merge([second, first], to: staged)
+            }
+            guard let document = PDFDocument(url: published) else {
+                throw TestFailure(description: "Merged PDF could not be opened")
+            }
+            try expectEqual(document.pageCount, 2)
+            try expect(document.page(at: 0)?.string?.contains("Second document") == true, "PDF merge changed input order")
+            try expect(document.page(at: 1)?.string?.contains("First document") == true, "PDF merge changed input order")
+            try expectEqual(try Data(contentsOf: first), firstBytes)
+            try expectEqual(try Data(contentsOf: second), secondBytes)
+        }
+
+        runner.test("empty PDF merge fails without publishing output") {
+            let folder = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+            try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
+            defer { try? FileManager.default.removeItem(at: folder) }
+            let destination = folder.appendingPathComponent("empty.pdf")
+            do {
+                _ = try OutputWriter.write(to: destination) { staged in
+                    try PDFOps.merge([], to: staged)
+                }
+                throw TestFailure(description: "Empty merge succeeded")
+            } catch is TestFailure {
+                throw TestFailure(description: "Empty merge succeeded")
+            } catch {
+                try expect(!FileManager.default.fileExists(atPath: destination.path), "Empty merge left output")
+                try expect(try FileManager.default.contentsOfDirectory(atPath: folder.path).isEmpty, "Empty merge left staged files")
+            }
+        }
+
+        runner.test("strong PDF compression keeps every page and the original") {
+            let folder = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+            try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
+            defer { try? FileManager.default.removeItem(at: folder) }
+            let first = folder.appendingPathComponent("first.pdf")
+            let second = folder.appendingPathComponent("second.pdf")
+            let source = folder.appendingPathComponent("source.pdf")
+            let destination = folder.appendingPathComponent("compressed.pdf")
+            try TextRenderer.writePDF("First page", to: first)
+            try TextRenderer.writePDF("Second page", to: second)
+            try PDFOps.merge([first, second], to: source)
+            let originalBytes = try Data(contentsOf: source)
+            _ = try OutputWriter.write(to: destination) { staged in
+                try PDFOps.compress(source, strong: true, to: staged)
+            }
+            let sourceDocument = try PDFOps.document(source)
+            let compressedDocument = try PDFOps.document(destination)
+            try expectEqual(compressedDocument.pageCount, 2)
+            for index in 0..<2 {
+                let originalBounds = sourceDocument.page(at: index)!.bounds(for: .mediaBox)
+                let compressedBounds = compressedDocument.page(at: index)!.bounds(for: .mediaBox)
+                try expectEqual(compressedBounds.size, originalBounds.size, "strong compression must retain page size")
+            }
+            try expectEqual(try Data(contentsOf: source), originalBytes)
+        }
+
+        runner.test("PDF page edits reorder and rotate without silently dropping missing pages") {
+            let folder = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+            try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
+            defer { try? FileManager.default.removeItem(at: folder) }
+            let first = folder.appendingPathComponent("first.pdf")
+            let second = folder.appendingPathComponent("second.pdf")
+            try TextRenderer.writePDF("First page", to: first)
+            try TextRenderer.writePDF("Second page", to: second)
+            let firstBytes = try Data(contentsOf: first)
+            let secondBytes = try Data(contentsOf: second)
+            let destination = folder.appendingPathComponent("organized.pdf")
+            let pages = [
+                PDFPageRef(sourceIndex: 0, rotation: 90, sourceURL: second),
+                PDFPageRef(sourceIndex: 0, rotation: 0, sourceURL: first),
+            ]
+            _ = try OutputWriter.write(to: destination) { staged in
+                try PDFOps.assemble(pages: pages, to: staged)
+            }
+            guard let organized = PDFDocument(url: destination) else { throw TestFailure(description: "Could not open organized PDF") }
+            try expectEqual(organized.pageCount, 2)
+            try expect(organized.page(at: 0)?.string?.contains("Second page") == true, "Pages were not reordered")
+            try expectEqual(organized.page(at: 0)?.rotation, 90)
+            try expect(organized.page(at: 1)?.string?.contains("First page") == true, "Pages were not reordered")
+            let invalid = folder.appendingPathComponent("invalid.pdf")
+            do {
+                _ = try OutputWriter.write(to: invalid) { staged in
+                    try PDFOps.assemble(pages: [PDFPageRef(sourceIndex: 9, rotation: 0, sourceURL: first)], to: staged)
+                }
+                throw TestFailure(description: "Missing PDF page was silently dropped")
+            } catch is TestFailure {
+                throw TestFailure(description: "Missing PDF page was silently dropped")
+            } catch {
+                try expect(!FileManager.default.fileExists(atPath: invalid.path), "Failed edit left a PDF output")
+            }
+            try expectEqual(try Data(contentsOf: first), firstBytes)
+            try expectEqual(try Data(contentsOf: second), secondBytes)
+        }
+
+        runner.test("solid image redaction renders an opaque copy") {
+            let folder = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+            try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
+            defer { try? FileManager.default.removeItem(at: folder) }
+            let source = CIImage(color: CIColor(red: 1, green: 0, blue: 0, alpha: 1))
+                .cropped(to: CGRect(x: 0, y: 0, width: 16, height: 16))
+            guard let originalImage = ImageToolSupport.cgImage(source) else {
+                throw TestFailure(description: "Could not render source image")
+            }
+            let original = folder.appendingPathComponent("original.png")
+            let destination = folder.appendingPathComponent("original redacted.png")
+            try ImageIOBridge.write(originalImage, to: original, format: .png)
+            let originalBytes = try Data(contentsOf: original)
+            let redaction = Redaction(rect: CGRect(x: 4, y: 4, width: 8, height: 8))
+            _ = try OutputWriter.write(to: destination) { staged in
+                let result = ImageOps.redact(source, redactions: [redaction])
+                guard let image = ImageToolSupport.cgImage(result) else {
+                    throw TestFailure(description: "Could not render redaction")
+                }
+                try ImageIOBridge.write(image, to: staged, format: .png)
+            }
+            let saved = try ImageIOBridge.load(destination)
+            let context = CIContext(options: [.useSoftwareRenderer: true])
+            var pixels = [UInt8](repeating: 0, count: 16 * 16 * 4)
+            pixels.withUnsafeMutableBytes { bytes in
+                context.render(CIImage(cgImage: saved), toBitmap: bytes.baseAddress!, rowBytes: 16 * 4,
+                               bounds: CGRect(x: 0, y: 0, width: 16, height: 16), format: .RGBA8,
+                               colorSpace: CGColorSpaceCreateDeviceRGB())
+            }
+            let covered = (8 * 16 + 8) * 4
+            let uncovered = (1 * 16 + 1) * 4
+            try expectEqual(Array(pixels[covered..<(covered + 4)]), [0, 0, 0, 255])
+            try expect(pixels[uncovered] > 240 && pixels[uncovered + 3] == 255, "Uncovered pixels must remain opaque red")
+            try expectEqual(try Data(contentsOf: original), originalBytes)
+        }
+
+        runner.test("blur and pixelation strength change rendered redactions") {
+            var pixels = [UInt8](repeating: 255, count: 96 * 96 * 4)
+            for y in 0..<96 {
+                for x in 0..<96 {
+                    let offset = (y * 96 + x) * 4
+                    pixels[offset] = UInt8(x * 2)
+                    pixels[offset + 1] = UInt8(y * 2)
+                    pixels[offset + 2] = UInt8((x + y) % 96 * 2)
+                }
+            }
+            let input = CIImage(bitmapData: Data(pixels), bytesPerRow: 96 * 4,
+                                size: CGSize(width: 96, height: 96), format: .RGBA8,
+                                colorSpace: CGColorSpaceCreateDeviceRGB())
+            var redaction = Redaction(rect: CGRect(x: 0, y: 0, width: 96, height: 96))
+            for style in [RedactionStyle.blur, .pixelate] {
+                redaction.style = style
+                redaction.strength = 1
+                let low = ImageOps.redact(input, redactions: [redaction])
+                redaction.strength = 6
+                let high = ImageOps.redact(input, redactions: [redaction])
+                guard let lowImage = ImageToolSupport.cgImage(low), let highImage = ImageToolSupport.cgImage(high),
+                      let lowData = lowImage.dataProvider?.data, let highData = highImage.dataProvider?.data else {
+                    throw TestFailure(description: "Could not render \(style.rawValue) samples")
+                }
+                try expect(lowData != highData, "Stronger \(style.rawValue) must change the exported pixels")
+            }
+        }
+
+        runner.test("Vision suggestions map bottom-origin boxes to image coordinates") {
+            let rect = RedactionSuggestions.imageRect(from: CGRect(x: 0.1, y: 0.2, width: 0.3, height: 0.4),
+                                                      size: CGSize(width: 1000, height: 500))
+            try expect(abs(rect.minX - 100) < 0.001 && abs(rect.minY - 200) < 0.001 &&
+                       abs(rect.width - 300) < 0.001 && abs(rect.height - 200) < 0.001,
+                       "Vision box must map to top-origin image coordinates")
+        }
+
+        runner.test("Vision suggests visible text areas locally") {
+            let image = NSImage(size: CGSize(width: 800, height: 180))
+            image.lockFocus()
+            NSColor.white.setFill()
+            NSRect(x: 0, y: 0, width: 800, height: 180).fill()
+            ("CONFIDENTIAL DOCUMENT" as NSString).draw(
+                at: CGPoint(x: 20, y: 45),
+                withAttributes: [.font: NSFont.boldSystemFont(ofSize: 60), .foregroundColor: NSColor.black]
+            )
+            image.unlockFocus()
+            guard let bitmap = image.cgImage(forProposedRect: nil, context: nil, hints: nil) else {
+                throw TestFailure(description: "Could not render text fixture")
+            }
+            let suggestions = try RedactionSuggestions.detect(.text, in: bitmap)
+            try expect(!suggestions.isEmpty, "Vision did not detect the visible text")
+            let bounds = CGRect(x: 0, y: 0, width: bitmap.width, height: bitmap.height)
+            try expect(suggestions.allSatisfy { bounds.contains($0) },
+                       "Suggested text area escaped the image")
+        }
+
+        runner.test("multiple images create readable PDF pages without changing inputs") {
+            let folder = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+            try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
+            defer { try? FileManager.default.removeItem(at: folder) }
+            let red = folder.appendingPathComponent("red.png")
+            let blue = folder.appendingPathComponent("blue.png")
+            let colors: [(URL, CIColor)] = [(red, CIColor(red: 1, green: 0, blue: 0)), (blue, CIColor(red: 0, green: 0, blue: 1))]
+            for (url, color) in colors {
+                let image = CIImage(color: color).cropped(to: CGRect(x: 0, y: 0, width: 16, height: 12))
+                guard let cg = ImageToolSupport.cgImage(image) else { throw TestFailure(description: "Could not make image fixture") }
+                try ImageIOBridge.write(cg, to: url, format: .png)
+            }
+            let originalBytes = try [red, blue].map { try Data(contentsOf: $0) }
+            let fit = folder.appendingPathComponent("fit.pdf")
+            let letter = folder.appendingPathComponent("letter.pdf")
+            _ = try OutputWriter.write(to: fit) { staged in
+                try PDFOps.fromImages([blue, red], to: staged, progress: { _ in })
+            }
+            _ = try OutputWriter.write(to: letter) { staged in
+                try PDFRenderer.writeImagesPDF([red, blue], pageSize: CGSize(width: 612, height: 792), to: staged, progress: { _ in })
+            }
+            for output in [fit, letter] {
+                guard let document = PDFDocument(url: output) else { throw TestFailure(description: "Could not read created PDF") }
+                try expectEqual(document.pageCount, 2)
+            }
+            try expectEqual(PDFDocument(url: letter)?.page(at: 0)?.bounds(for: .mediaBox).size, CGSize(width: 612, height: 792))
+            try expectEqual(try [red, blue].map { try Data(contentsOf: $0) }, originalBytes)
+        }
+
+        await runner.testAsync("real local image and document conversions produce readable copies") {
+            let folder = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+            try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
+            defer { try? FileManager.default.removeItem(at: folder) }
+            let original = folder.appendingPathComponent("study notes.txt")
+            let pdf = folder.appendingPathComponent("study notes.pdf")
+            try Data("ZeroClick local conversion".utf8).write(to: original)
+            let documentRequest = ConversionRequest(source: original, sourceFormat: .txt, target: .pdf, destination: pdf, progress: { _ in })
+            let publishedPDF = try await Engines.convert(documentRequest)
+            try expectEqual(publishedPDF, pdf)
+            try expect((PDFDocument(url: publishedPDF)?.pageCount ?? 0) > 0, "PDF must be readable")
+            try expectEqual(String(data: try Data(contentsOf: original), encoding: .utf8), "ZeroClick local conversion")
+            let markdown = folder.appendingPathComponent("study notes.md")
+            let markdownRequest = ConversionRequest(source: publishedPDF, sourceFormat: .pdf, target: .md, destination: markdown, progress: { _ in })
+            let publishedMarkdown = try await Engines.convert(markdownRequest)
+            try expectEqual(publishedMarkdown, markdown)
+            try expect(try String(contentsOf: publishedMarkdown, encoding: .utf8).contains("ZeroClick local conversion"), "PDF text must survive Markdown export")
+
+            guard let bitmap = NSBitmapImageRep(bitmapDataPlanes: nil, pixelsWide: 4, pixelsHigh: 4, bitsPerSample: 8, samplesPerPixel: 4, hasAlpha: true, isPlanar: false, colorSpaceName: .deviceRGB, bytesPerRow: 0, bitsPerPixel: 0), let image = bitmap.cgImage else {
+                throw TestFailure(description: "Could not make sample image")
+            }
+            let png = folder.appendingPathComponent("sample.png")
+            let jpg = folder.appendingPathComponent("sample.jpg")
+            try ImageIOBridge.write(image, to: png, format: .png)
+            let imageRequest = ConversionRequest(source: png, sourceFormat: .png, target: .jpg, destination: jpg, progress: { _ in })
+            _ = try await Engines.convert(imageRequest)
+            try expectEqual(FileFormat.detect(jpg), .jpg)
+            try expect(ImageIOBridge.pixelSize(jpg).width > 0, "JPEG must be readable")
+            try expectEqual(FileFormat.detect(png), .png)
+        }
+
+        await runner.testAsync("read-only Unicode source converts without changing its bytes") {
+            let folder = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+            try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
+            defer { try? FileManager.default.removeItem(at: folder) }
+            let source = folder.appendingPathComponent("café 学習 notes.txt")
+            let destination = folder.appendingPathComponent("café 学習 notes.pdf")
+            let bytes = Data("Local study notes with Unicode filename".utf8)
+            try bytes.write(to: source)
+            try FileManager.default.setAttributes([.posixPermissions: 0o444], ofItemAtPath: source.path)
+            let request = ConversionRequest(source: source, sourceFormat: .txt, target: .pdf, destination: destination, progress: { _ in })
+            let published = try await Engines.convert(request)
+            try expectEqual(published, destination)
+            try expectEqual(PDFDocument(url: published)?.pageCount, 1)
+            try expectEqual(try Data(contentsOf: source), bytes)
+            let attributes = try FileManager.default.attributesOfItem(atPath: source.path)
+            try expectEqual((attributes[.posixPermissions] as? NSNumber)?.intValue, 0o444)
+        }
+
+        await runner.testAsync("HEIC converts to a readable PNG while preserving the original") {
+            guard ImageIOBridge.canEncodeNatively(.heic) else {
+                throw TestFailure(description: "Native HEIC encoder unavailable on this Mac")
+            }
+            let folder = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+            try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
+            defer { try? FileManager.default.removeItem(at: folder) }
+            let source = folder.appendingPathComponent("photo.heic")
+            let destination = folder.appendingPathComponent("photo.png")
+            let colored = CIImage(color: CIColor(red: 0.2, green: 0.6, blue: 0.8))
+                .cropped(to: CGRect(x: 0, y: 0, width: 64, height: 64))
+            guard let image = ImageToolSupport.cgImage(colored) else {
+                throw TestFailure(description: "Could not render HEIC fixture")
+            }
+            try ImageIOBridge.write(image, to: source, format: .heic)
+            let originalBytes = try Data(contentsOf: source)
+            let request = ConversionRequest(source: source, sourceFormat: .heic, target: .png, destination: destination, progress: { _ in })
+            _ = try await Engines.convert(request)
+            try expectEqual(FileFormat.detect(destination), .png)
+            try expectEqual(ImageIOBridge.pixelSize(destination), CGSize(width: 64, height: 64))
+            try expectEqual(try Data(contentsOf: source), originalBytes)
+        }
+
+        runner.test("large SVG preview respects its pixel limit") {
+            let folder = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+            try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
+            defer { try? FileManager.default.removeItem(at: folder) }
+            let source = folder.appendingPathComponent("large.svg")
+            try "<svg xmlns=\"http://www.w3.org/2000/svg\" width=\"10000\" height=\"5000\"><rect width=\"10000\" height=\"5000\" fill=\"red\"/></svg>"
+                .write(to: source, atomically: true, encoding: .utf8)
+            let preview = try ImageIOBridge.load(source, maxPixelSize: 320)
+            try expect(preview.width <= 320 && preview.height <= 320, "SVG preview exceeded pixel limit")
+            try expect(preview.width > 0 && preview.height > 0, "SVG preview is empty")
+        }
+
+        await runner.testAsync("image compression and metadata removal create new readable files") {
+            let folder = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+            try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
+            defer { try? FileManager.default.removeItem(at: folder) }
+            guard let bitmap = NSBitmapImageRep(bitmapDataPlanes: nil, pixelsWide: 16, pixelsHigh: 16, bitsPerSample: 8, samplesPerPixel: 4, hasAlpha: true, isPlanar: false, colorSpaceName: .deviceRGB, bytesPerRow: 0, bitsPerPixel: 0), let image = bitmap.cgImage else {
+                throw TestFailure(description: "Could not make sample image")
+            }
+            let original = folder.appendingPathComponent("photo.png")
+            let compressedFormat = Compressor.outputFormat(for: original)
+            let compressed = folder.appendingPathComponent("photo compressed.\(compressedFormat.fileExtension)")
+            let clean = folder.appendingPathComponent("photo clean.png")
+            try ImageIOBridge.write(image, to: original, format: .png)
+            _ = try await OutputWriter.writeAsync(to: compressed) { staged in
+                try await Compressor.compress(original, preset: .balanced, resizeLongEdge: 0, targetBytes: nil, to: staged, progress: { _ in })
+            }
+            _ = try await OutputWriter.writeAsync(to: clean) { staged in
+                try await MetadataOps.write(original, edits: [], removeAll: true, removeSensitive: true, to: staged, progress: { _ in })
+            }
+            try expect(FileFormat.detect(compressed) == compressedFormat, "compressed signature \(Array((try Data(contentsOf: compressed)).prefix(12))) does not match \(compressedFormat)")
+            try expectEqual(FileFormat.detect(clean), .png)
+            try expectEqual(FileFormat.detect(original), .png)
+            try expect(ImageIOBridge.pixelSize(compressed).width > 0 && ImageIOBridge.pixelSize(clean).width > 0, "Outputs must decode")
+        }
+
+        runner.test("no format converts to itself") {
+            for format in FileFormat.allCases {
+                try expect(!ConversionMatrix.targets(for: format).contains(format), "\(format) targets itself")
+            }
+        }
+
+        runner.test("JPG and PNG export DOCX, other images do not") {
+            try expect(ConversionMatrix.targets(for: .jpg).contains(.docx), "jpg → docx")
+            try expect(ConversionMatrix.targets(for: .png).contains(.docx), "png → docx")
+            try expect(!ConversionMatrix.targets(for: .webp).contains(.docx), "webp → docx")
+            try expect(ConversionMatrix.targets(for: .svg).contains(.pdf), "svg → pdf")
+        }
+
+        runner.test("video exports GIF and MP3, GIF does not") {
+            try expect(ConversionMatrix.targets(for: .mp4).contains(.gif), "mp4 → gif")
+            try expect(ConversionMatrix.targets(for: .mp4).contains(.mp3), "mp4 → mp3")
+            try expect(!ConversionMatrix.targets(for: .gif).contains(.mp3), "gif → mp3")
+            try expectEqual(ConversionMatrix.targets(for: .gif), FileFormat.video)
+        }
+
+        runner.test("PDF, TXT, subtitle and archive targets") {
+            try expectEqual(ConversionMatrix.targets(for: .pdf), [.docx, .jpg, .png, .txt, .md])
+            try expectEqual(ConversionMatrix.targets(for: .txt), [.pdf, .jpg, .png, .srt, .vtt])
+            try expectEqual(ConversionMatrix.targets(for: .srt), [.vtt, .txt])
+            try expectEqual(ConversionMatrix.targets(for: .zip), [.tar, .gz])
+            try expectEqual(ConversionMatrix.targets(for: .docx), [.txt, .md])
+        }
+
+        runner.test("every offered conversion has an engine") {
+            for source in FileFormat.allCases {
+                for target in ConversionMatrix.targets(for: source) {
+                    try expect(Engines.engine(from: source, to: target) != nil, "No engine for \(source) → \(target)")
+                }
+            }
+        }
+
+        await runner.testAsync("DOCX exports paragraphs as UTF-8 text") {
+            let folder = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+            try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
+            defer { try? FileManager.default.removeItem(at: folder) }
+            let source = folder.appendingPathComponent("sample.docx")
+            let output = folder.appendingPathComponent("sample.txt")
+            let markdown = folder.appendingPathComponent("sample.md")
+            try await DocxWriter.write(paragraphs: ["First & last", "Second line"], images: [], to: source)
+            let request = ConversionRequest(source: source, sourceFormat: .docx, target: .txt, destination: output, progress: { _ in })
+            try await DocumentEngine().convert(request)
+            try expectEqual(try String(contentsOf: output, encoding: .utf8), "First & last\nSecond line")
+            let markdownRequest = ConversionRequest(source: source, sourceFormat: .docx, target: .md, destination: markdown, progress: { _ in })
+            try await DocumentEngine().convert(markdownRequest)
+            try expectEqual(try String(contentsOf: markdown, encoding: .utf8), "First & last\n\nSecond line")
+        }
+
+        runner.test("mixed selection intersects targets") {
+            try expectEqual(ConversionMatrix.targets(for: [.jpg, .webp]), [.png, .heic, .tiff, .avif, .bmp, .pdf])
+            try expectEqual(ConversionMatrix.targets(for: [.jpg, .mp3]), [])
+            try expectEqual(ConversionMatrix.targets(for: []), [])
+        }
+
+        runner.test("format detection from extension and aliases") {
+            try expectEqual(FileFormat.detect(URL(fileURLWithPath: "/tmp/Photo.JPEG")), .jpg)
+            try expectEqual(FileFormat.detect(URL(fileURLWithPath: "/tmp/a.tif")), .tiff)
+            try expectEqual(FileFormat.detect(URL(fileURLWithPath: "/tmp/a.tgz")), .gz)
+            try expectEqual(FileFormat.detect(URL(fileURLWithPath: "/tmp/a.unknown")), nil)
+        }
+
+        runner.test("existing files reject misleading extensions") {
+            let directory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+            try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+            defer { try? FileManager.default.removeItem(at: directory) }
+            let valid = directory.appendingPathComponent("valid.pdf")
+            let disguised = directory.appendingPathComponent("disguised.png")
+            try Data("%PDF-1.4\n".utf8).write(to: valid)
+            try Data("%PDF-1.4\n".utf8).write(to: disguised)
+            try expectEqual(FileFormat.detect(valid), .pdf)
+            try expectEqual(FileFormat.detect(disguised), nil)
+        }
+
+        runner.test("stripped base names") {
+            try expectEqual(ConversionMatrix.strippedBaseName("archive.tar.gz"), "archive")
+            try expectEqual(ConversionMatrix.strippedBaseName("archive.tgz"), "archive")
+            try expectEqual(ConversionMatrix.strippedBaseName("my.photo.HEIC"), "my.photo")
+            try expectEqual(ConversionMatrix.strippedBaseName(".hidden"), ".hidden")
+            try expectEqual(ConversionMatrix.strippedBaseName("noext"), "noext")
+        }
+
+        runner.test("output naming avoids collisions") {
+            let dir = FileManager.default.temporaryDirectory.appendingPathComponent("satsuma-tests-\(UUID().uuidString)")
+            try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+            defer { try? FileManager.default.removeItem(at: dir) }
+            let source = URL(fileURLWithPath: "/tmp/photo.heic")
+            let first = ConversionMatrix.outputURL(for: source, target: .jpg, in: dir)
+            try expectEqual(first.lastPathComponent, "photo.jpg")
+            try Data().write(to: first)
+            let second = ConversionMatrix.outputURL(for: source, target: .jpg, in: dir)
+            try expectEqual(second.lastPathComponent, "photo 2.jpg")
+            let third = ConversionMatrix.outputURL(for: source, target: .jpg, in: dir, existing: ["photo 2.jpg"])
+            try expectEqual(third.lastPathComponent, "photo 3.jpg")
+            let suffixed = ConversionMatrix.uniqueURL(directory: dir, baseName: "photo", suffix: "compressed", ext: "jpg")
+            try expectEqual(suffixed.lastPathComponent, "photo compressed.jpg")
+            try Data().write(to: suffixed)
+            try expectEqual(ConversionMatrix.uniqueURL(directory: dir, baseName: "photo", suffix: "compressed", ext: "jpg").lastPathComponent, "photo compressed 2.jpg")
+            try expectEqual(ConversionMatrix.uniqueURL(directory: dir, baseName: "photo", suffix: "", ext: "pdf").lastPathComponent, "photo.pdf")
+            try FileManager.default.createDirectory(at: dir.appendingPathComponent("clip clips"), withIntermediateDirectories: true)
+            try expectEqual(ConversionMatrix.uniqueDirectory(directory: dir, name: "clip clips").lastPathComponent, "clip clips 2")
+            let unicode = URL(fileURLWithPath: "/tmp/café notes 📝.heic")
+            let unicodeFirst = ConversionMatrix.outputURL(for: unicode, target: .jpg, in: dir)
+            try expectEqual(unicodeFirst.lastPathComponent, "café notes 📝.jpg")
+            try Data("occupied".utf8).write(to: unicodeFirst)
+            try expectEqual(ConversionMatrix.outputURL(for: unicode, target: .jpg, in: dir).lastPathComponent, "café notes 📝 2.jpg")
+        }
+
+        runner.test("SRT parsing") {
+            let srt = "1\n00:00:01,000 --> 00:00:02,500\nHello\nWorld\n\n2\n00:01:00,000 --> 00:01:03,250\n<i>Bye</i>\n"
+            let cues = SubtitleParser.parse(srt, hint: .srt)
+            try expectEqual(cues.count, 2)
+            try expectEqual(cues[0].start, 1)
+            try expectEqual(cues[0].end, 2.5)
+            try expectEqual(cues[0].text, "Hello\nWorld")
+            try expectEqual(cues[1].start, 60)
+            try expectEqual(cues[1].end, 63.25)
+        }
+
+        runner.test("VTT parsing with header, notes and cue settings") {
+            let vtt = "WEBVTT\nKind: captions\n\nNOTE comment\n\n00:01.000 --> 00:02.000 align:start\nFirst\n\n01:00:00.000 --> 01:00:01.000\nSecond\n"
+            let cues = SubtitleParser.parse(vtt, hint: .vtt)
+            try expectEqual(cues.count, 2)
+            try expectEqual(cues[0].start, 1)
+            try expectEqual(cues[0].end, 2)
+            try expectEqual(cues[0].text, "First")
+            try expectEqual(cues[1].start, 3600)
+        }
+
+        runner.test("subtitle serialization round trip") {
+            let cues = [SubtitleCue(start: 0.5, end: 2, text: "A"), SubtitleCue(start: 3661.25, end: 3662, text: "B\nC")]
+            let srt = SubtitleParser.serialize(cues, as: .srt)
+            try expect(srt.hasPrefix("1\n00:00:00,500 --> 00:00:02,000\nA\n\n2\n01:01:01,250 --> 01:01:02,000\nB\nC\n"), "srt output: \(srt)")
+            let vtt = SubtitleParser.serialize(cues, as: .vtt)
+            try expect(vtt.hasPrefix("WEBVTT\n\n00:00:00.500 --> 00:00:02.000\nA\n\n"), "vtt output: \(vtt)")
+            let back = SubtitleParser.parse(vtt, hint: .vtt)
+            try expectEqual(back.count, 2)
+            try expectEqual(back[1].start, 3661.25)
+            try expectEqual(SubtitleParser.serialize([SubtitleCue(start: 0, end: 1, text: "<b>x</b> {\\an8}y")], as: .txt), "x y\n")
+        }
+
+        runner.test("plain text becomes timed cues") {
+            let cues = SubtitleParser.plainTextCues("One two three\n\nFour five")
+            try expectEqual(cues.count, 2)
+            try expectEqual(cues[0].start, 0)
+            try expect(cues[1].start == cues[0].end, "cues are contiguous")
+            try expect(cues[0].end - cues[0].start >= 1.5, "minimum duration")
+        }
+
+        runner.test("timestamp parsing") {
+            try expectEqual(SubtitleParser.parseTimestamp("00:00:01,500"), 1.5)
+            try expectEqual(SubtitleParser.parseTimestamp("01:02.250"), 62.25)
+            try expectEqual(SubtitleParser.parseTimestamp("5"), 5)
+            try expectEqual(SubtitleParser.parseTimestamp("a:b"), nil)
+            try expectEqual(TimeFormatter.parseClock("1:02.5"), 62.5)
+            try expectEqual(TimeFormatter.clock(62.5), "1:02.50")
+        }
+
+        runner.test("PDF page range parsing") {
+            try expectEqual(PDFOps.parseRanges("1-3, 5, 7-6, 12", pageCount: 10), [1...3, 5...5, 6...7])
+            try expectEqual(PDFOps.parseRanges("-2, 8-", pageCount: 10), [1...2, 8...10])
+            try expectEqual(PDFOps.parseRanges("abc", pageCount: 10), [])
+        }
+
+        runner.test("password-protected PDF unlock preserves the original and rejects wrong passwords") {
+            let folder = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+            try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
+            defer { try? FileManager.default.removeItem(at: folder) }
+            let plain = folder.appendingPathComponent("plain.pdf")
+            let locked = folder.appendingPathComponent("locked.pdf")
+            let unlocked = folder.appendingPathComponent("locked unlocked.pdf")
+            try TextRenderer.writePDF("Private test page", to: plain)
+            let document = try PDFOps.document(plain)
+            let options: [PDFDocumentWriteOption: Any] = [
+                .userPasswordOption: "test-open-42",
+                .ownerPasswordOption: "test-owner-42"
+            ]
+            try expect(document.write(to: locked, withOptions: options), "Could not create locked test PDF")
+            let originalBytes = try Data(contentsOf: locked)
+            guard let lockedDocument = PDFDocument(url: locked) else { throw TestFailure(description: "Could not reopen locked fixture") }
+            try expect(lockedDocument.isEncrypted && lockedDocument.isLocked, "Fixture must require a password")
+            let wheel = ActionRegistry.items(for: .tools, formats: [.pdf], urls: [locked])
+            try expectEqual(wheel.map(\.action), [.tool(.unlockPDF)])
+            let normalWheel = ActionRegistry.items(for: .tools, formats: [.pdf], urls: [plain])
+            try expect(!normalWheel.contains { $0.action == .tool(.unlockPDF) }, "Normal PDF must hide Unlock")
+            do {
+                _ = try OutputWriter.write(to: unlocked) { staged in
+                    try PDFOps.unlock(locked, password: "wrong", to: staged)
+                }
+                throw TestFailure(description: "Wrong password succeeded")
+            } catch is TestFailure {
+                throw TestFailure(description: "Wrong password succeeded")
+            } catch {
+                try expect(!FileManager.default.fileExists(atPath: unlocked.path), "Wrong password left an output")
+            }
+            _ = try OutputWriter.write(to: unlocked) { staged in
+                try PDFOps.unlock(locked, password: "test-open-42", to: staged)
+            }
+            guard let copy = PDFDocument(url: unlocked) else { throw TestFailure(description: "Could not reopen unlocked output") }
+            try expect(!copy.isEncrypted && !copy.isLocked, "Output still requires password")
+            try expectEqual(copy.pageCount, 1)
+            try expect(copy.page(at: 0)?.string?.contains("Private test page") == true, "Page text was lost")
+            try expectEqual(try Data(contentsOf: locked), originalBytes, "Source bytes changed")
+            try expect(try FileManager.default.contentsOfDirectory(atPath: folder.path).count == 3, "Unexpected staged files")
+        }
+
+        runner.test("tool applicability") {
+            try expect(ToolID.cropImage.applies(to: [.jpg]), "crop single image")
+            try expect(!ToolID.cropImage.applies(to: [.jpg, .png]), "crop needs one image")
+            try expect(ToolID.createCollage.applies(to: [.jpg, .heic]), "collage multiple images")
+            try expect(!ToolID.createCollage.applies(to: [.jpg]), "collage needs two")
+            try expect(ToolID.compress.applies(to: [.pdf, .pdf]), "compress pdfs")
+            try expect(!ToolID.compress.applies(to: [.jpg, .mp4]), "mixed categories")
+            try expect(!ToolID.trimVideo.applies(to: [.gif]), "gif is not trimmable")
+            try expect(ToolID.compress.applies(to: [.gif]), "gif compress")
+            try expect(!ToolID.mergePDF.applies(to: [.docx, .docx]), "docx merge")
+            try expectEqual(ToolID.available(for: [.mp3]).count, 7)
+            try expectEqual(ToolID.available(for: [.pdf]).count, 5)
+        }
+
+        runner.test("compression presets") {
+            try expect(CompressionPreset.strong.imageQuality < CompressionPreset.balanced.imageQuality, "strong is smaller")
+            try expect(CompressionPreset.strong.videoBitrateFactor < CompressionPreset.balanced.videoBitrateFactor, "strong video")
+            try expectEqual(Compressor.outputFormat(for: URL(fileURLWithPath: "/tmp/a.svg")), .jpg)
+            try expectEqual(Compressor.outputFormat(for: URL(fileURLWithPath: "/tmp/a.jpg")), .jpg)
+            try expectEqual(Compressor.outputFormat(for: URL(fileURLWithPath: "/tmp/a.wav")), .m4a)
+        }
+
+        runner.test("FFmpeg timecode formatting") {
+            try expectEqual(FFmpeg.timecode(3661.5), "01:01:01.500")
+            try expectEqual(FFmpeg.timecode(0), "00:00:00.000")
+        }
+
+        runner.test("sf symbols resolve") {
+            for tool in ToolID.allCases {
+                try expect(NSImage(systemSymbolName: tool.symbol, accessibilityDescription: nil) != nil, "\(tool.rawValue) symbol \(tool.symbol)")
+            }
+            for category in FormatCategory.allCases {
+                try expect(NSImage(systemSymbolName: category.symbol, accessibilityDescription: nil) != nil, "\(category.rawValue) symbol")
+            }
+        }
+
+        runner.finish()
+    }
+}
