@@ -60,9 +60,29 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         panel.allowsMultipleSelection = true
         panel.canChooseDirectories = false
         panel.canChooseFiles = true
+        panel.showsHiddenFiles = true
         NSApp.activate(ignoringOtherApps: true)
         panel.begin { response in
             guard response == .OK, !panel.urls.isEmpty else { return }
+            let manager = FileManager.default
+            if let unreadable = panel.urls.first(where: { !manager.isReadableFile(atPath: $0.path) }) {
+                let alert = NSAlert()
+                alert.messageText = "ZeroClick can't read \(unreadable.lastPathComponent)"
+                alert.informativeText = "This file needs administrator access. Copy it to a folder you own in Finder (macOS may offer Touch ID), then open that copy in ZeroClick. ZeroClick never changes the protected original."
+                alert.addButton(withTitle: "OK")
+                alert.runModal()
+                return
+            }
+            if AppSettings.shared.outputLocation == .besideOriginal,
+               panel.urls.contains(where: { !manager.isWritableFile(atPath: $0.deletingLastPathComponent().path) }) {
+                let alert = NSAlert()
+                alert.messageText = "The original folder is protected"
+                alert.informativeText = "ZeroClick can read the selected file but cannot save a new copy beside it. Use Downloads for this and future outputs, or cancel and choose another output location in Settings. The original stays unchanged."
+                alert.addButton(withTitle: "Use Downloads as default")
+                alert.addButton(withTitle: "Cancel")
+                guard alert.runModal() == .alertFirstButtonReturn else { return }
+                AppSettings.shared.outputLocation = .downloads
+            }
             completion(panel.urls)
         }
     }

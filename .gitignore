@@ -3,3 +3,5 @@
 *.dSYM
 .DS_Store
 *.xcuserstate
+Resources/Upscaler/
+Resources/.Upscaler-staged-*/

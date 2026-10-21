@@ -14,6 +14,7 @@ enum ToolID: String, CaseIterable, Identifiable {
     case cropImage
     case redactImage
     case resizeImage
+    case upscaleImage
     case rotateImage
     case createPDF
     case createCollage
@@ -50,6 +51,7 @@ enum ToolID: String, CaseIterable, Identifiable {
         case .cropImage: return "Crop image"
         case .redactImage: return "Redact photo"
         case .resizeImage: return "Resize images"
+        case .upscaleImage: return "Upscale images"
         case .rotateImage: return "Rotate & flip"
         case .createPDF: return "Create a PDF"
         case .createCollage: return "Create a collage"
@@ -86,6 +88,7 @@ enum ToolID: String, CaseIterable, Identifiable {
         case .cropImage, .cropVideo: return "Cropping"
         case .redactImage, .redactVideo: return "Redacting"
         case .resizeImage: return "Resizing"
+        case .upscaleImage: return "Upscaling"
         case .rotateImage: return "Rotating"
         case .createPDF: return "Creating PDF"
         case .createCollage: return "Creating collage"
@@ -118,6 +121,7 @@ enum ToolID: String, CaseIterable, Identifiable {
         case .cropImage, .cropVideo: return "CROP"
         case .redactImage, .redactVideo: return "REDACT"
         case .resizeImage: return "RESIZE"
+        case .upscaleImage: return "UPSCALE"
         case .rotateImage: return "ROTATE"
         case .createPDF: return "PDF"
         case .createCollage: return "COLLAGE"
@@ -151,6 +155,7 @@ enum ToolID: String, CaseIterable, Identifiable {
         case .redactImage: return "eye.slash"
         case .redactVideo: return "video.slash"
         case .resizeImage: return "arrow.up.left.and.arrow.down.right"
+        case .upscaleImage: return "sparkles.rectangle.stack"
         case .rotateImage: return "rotate.right"
         case .createPDF: return "doc.richtext"
         case .createCollage: return "square.grid.2x2"
@@ -179,7 +184,7 @@ enum ToolID: String, CaseIterable, Identifiable {
         switch self {
         case .compress, .editMetadata:
             return [.image, .video, .audio, .document]
-        case .editImage, .frameImage, .cropImage, .redactImage, .resizeImage, .rotateImage, .createPDF, .createCollage:
+        case .editImage, .frameImage, .cropImage, .redactImage, .resizeImage, .upscaleImage, .rotateImage, .createPDF, .createCollage:
             return [.image]
         case .trimVideo, .cropVideo, .changeVideoSpeed, .joinVideos, .videoSnapshots, .splitVideo, .redactVideo:
             return [.video]
@@ -198,7 +203,7 @@ enum ToolID: String, CaseIterable, Identifiable {
 
     var arity: ToolArity {
         switch self {
-        case .compress, .editMetadata, .resizeImage, .rotateImage, .createPDF: return .any
+        case .compress, .editMetadata, .resizeImage, .upscaleImage, .rotateImage, .createPDF: return .any
         case .createCollage, .joinVideos, .mergePDF: return .multiple
         default: return .single
         }
@@ -220,6 +225,7 @@ enum ToolID: String, CaseIterable, Identifiable {
         }
         if category == .archive && self != .encryptFile && (self != .unlockZIP || formats != [.zip]) { return false }
         if self == .hideMessage || self == .revealMessage { return formats == [.png] }
+        if self == .upscaleImage && formats.contains(.svg) { return false }
         if self == .decryptFile { return false }
         if category == .video, formats.contains(.gif), self != .compress, self != .editMetadata, self != .encryptFile { return false }
         switch arity {

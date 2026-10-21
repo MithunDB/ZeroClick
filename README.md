@@ -14,11 +14,13 @@
   &nbsp;·&nbsp; <a href="#whats-inside">What's inside</a>
 </p>
 
-> **Private local release:** The downloadable build includes the tested local tools, protected ZIP unlocking, ZeroClick-created encrypted files, PNG message hiding, and visible disabled actions. The AI wheel is a disabled preview.
+> **Private local release:** The downloadable build includes the tested local tools, protected ZIP unlocking, ZeroClick-created encrypted files, PNG message hiding, local image upscaling, and visible disabled actions. The AI wheel is a disabled preview.
+
+**Upscale images** appears in the Shift+Option Tools wheel. It runs on the Mac with one bundled illustration-oriented 4× model; optional `.param`/`.bin` model pairs can be imported into Application Support and are not included in the app package. See [the upscaling audit](docs/UPSCALING_AUDIT.md) for the model and dependency notices.
 
 ZeroClick works from a Finder drag. It reads and writes files locally, with no uploads or telemetry. Conversions and editing tools save new copies; only the explicit **Move** action relocates a selected file.
 
-ZeroClick is a private local derivative of Satsuma, an open-source reimplementation of the Tangerine workflow: 190 conversion options across images, video, audio, documents, subtitles and archives, and 31 advanced file tools.
+ZeroClick is a private local derivative of Satsuma, an open-source reimplementation of the Tangerine workflow: 190 conversion options across images, video, audio, documents, subtitles and archives, and 32 advanced file tools.
 
 Password-protected PDFs can be unlocked into a separate unprotected copy. The original stays encrypted.
 
@@ -41,7 +43,7 @@ ZeroClick requires an **Apple silicon Mac with macOS 26 or later**. The download
 ## What's inside
 
 - **190 conversion routes** across images, audio, video, documents, subtitles, and archives.
-- **31 local tools** for editing, redaction, compression, PDF pages, and more.
+- **32 local tools** for editing, redaction, compression, PDF pages, upscaling, and more.
 - **Safe outputs** with collision-resistant names, staged writes, cancellation, and operation history capped at 50 entries.
 - **Private by design:** no account, cloud processing, telemetry, or AI backend.
 
@@ -56,6 +58,8 @@ ZeroClick requires an **Apple silicon Mac with macOS 26 or later**. The download
 Keyboard: when you open the wheel through the menu-bar **Convert Files…** picker, arrow keys choose an action, **Return** applies it, and **Escape** closes it. During a Finder drag, Finder owns keyboard focus; move the pointer over a wedge to highlight it, then release to choose.
 
 ZeroClick lives in the menu bar (no Dock icon). The status item shows job progress and opens Settings.
+
+The menu-bar file pickers show hidden files. If a selected file is readable but its folder is protected against writes, ZeroClick offers to save new copies in Downloads and updates the output-location setting. If the file itself requires administrator read access, make a copy with Finder's own authorization prompt first, then open that copy in ZeroClick. Touch ID authenticates Finder's privileged action; it does not grant ZeroClick elevated file access. ZeroClick does not overwrite protected originals or install a privileged helper.
 
 ## Look and feel
 
@@ -82,7 +86,7 @@ Native frameworks are used first: ImageIO/Core Graphics for images, AVFoundation
 | Scope | Tools |
 | --- | --- |
 | Any file | Compress (Balanced/Strong, target size, resize), Edit metadata (view, edit, strip sensitive or all fields), Encrypt to `.zclick`, Decrypt a ZeroClick file |
-| Images | Edit photos, Add a background, Crop, Redact, Resize, Rotate, Create a PDF, Make a collage |
+| Images | Edit photos, Add a background, Crop, Redact, Resize, Rotate, Create a PDF, Make a collage, Upscale |
 | Video | Trim, Split, Crop, Change speed, Join, Save frames, Redact |
 | Audio | Trim, Normalize volume, Convert channels, Bleep, Create an audio visualizer |
 | PDF | Merge, Organize pages, Split, Unlock protected PDF into a new copy |
@@ -93,13 +97,19 @@ The Shift+Option Tools wheel and Command file-actions wheel can encrypt a select
 
 Image redaction can suggest face or text areas locally with Vision. Review and adjust the boxes before confirming export. Blur and Pixelate have per-area strength sliders from 1× to 8×; use Solid for sensitive text because blur and pixelation can leave details recoverable. Redacted output is a new copy without inherited EXIF/TIFF metadata.
 
+**Upscale** opens one native window with model, 2×–8× output scale, PNG/JPG/WebP format, and on-demand before/after preview. When several images are selected, arrows let you preview each image while one progress job processes the full batch. The bundled model favors illustrations; photos can look softer. Amounts above 4× run a second model pass and may reduce photo detail. A size limit disables unsafe amounts for large images. All output is saved as new copies. The model and engine run locally, and optional imported models stay in `~/Library/Application Support/ZeroClick/Models` rather than inside the app or repository.
+
 ## Build from source
 
 - Apple silicon Mac running macOS 26 or later.
 - [Brisk](https://github.com/plyght/brisk) and the Xcode command-line tools (`swiftc`) to build from source.
 - Optional: `ffmpeg` for the non-native media formats listed above (`wax install ffmpeg`). ZeroClick looks in `PATH`, `/opt/homebrew/bin` and `/usr/local/bin`; a custom path can be set in Settings.
 
+The upscaler engine and one illustration model are downloaded from their pinned upstream releases before a source build. The script verifies both download hashes and installs their notices. Personal model weights are never part of the checkout or build.
+
 ```bash
+scripts/prepare-upscaler.sh
+scripts/check.sh        # build and run the full test suite
 brisk build            # debug .app in .build/debug/ZeroClick.app
 brisk run              # build and launch
 brisk test             # compile and run Tests/ with the app sources
@@ -123,7 +133,7 @@ scripts/check.sh --fix  # apply swift-format fixes first
 
 ## Verification status
 
-Local `brisk test` passes 70/70 checks, and `brisk archive --release` produces an ad-hoc signed standalone `.brisk/Archives/ZeroClick.app`. Finder drag tests have verified conversion, PDF Tools, file-actions, the disabled AI wheel, text redaction, PDF merge/split/organize/compression, ZIP extraction, protected PDF and ZIP unlocking, `.zclick` encryption/decryption, PNG message hiding/revealing, formatted Markdown PDF output, and the drag wheel after Finder relaunch. Category-relevant disabled actions also passed Finder verification; unavailable wedges remain visible and cannot run. VoiceOver was not physically checked, and only one display was connected during testing.
+The v0.2.0 build passes 73/73 checks and produces an ad-hoc signed standalone `.brisk/Archives/ZeroClick.app`. Finder drag tests have verified conversion, PDF Tools, file-actions, the disabled AI wheel, text redaction, PDF merge/split/organize/compression, ZIP extraction, protected PDF and ZIP unlocking, `.zclick` encryption/decryption, PNG message hiding/revealing, formatted Markdown PDF output, and the drag wheel after Finder relaunch. Upscaling's 2× preview and saved copy, two-image batch, per-image preview navigation, and cancellation have also passed Finder checks. Category-relevant disabled actions remain visible and cannot run. VoiceOver was not physically checked, and only one display was connected during testing.
 
 ## Project layout
 
@@ -135,7 +145,7 @@ Sources/Engines            Conversion engines: image, audio, video, document, su
 Sources/Operations         Tool backends: ImageOps, VideoOps, AudioOps, PDFOps, MetadataOps, Compressor
 Sources/Radial             Global drag/modifier monitor and the radial menu overlay
 Sources/Core               Job runner, progress HUD (card and notch pill), shell, media probing
-Sources/Tools              Tool window shell, tool registry and the 31 tool views
+Sources/Tools              Tool window shell, tool registry and the 32 tool views
 Tests                      Direct Swift tests run by `brisk test`
 ```
 

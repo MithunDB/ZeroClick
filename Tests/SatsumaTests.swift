@@ -73,12 +73,184 @@ struct SatsumaTests {
     static func main() async {
         let runner = TestRunner()
 
+        runner.test("personal upscaler models import as matched pairs outside app resources") {
+            let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString, isDirectory: true)
+            let source = root.appendingPathComponent("source", isDirectory: true)
+            let installed = root.appendingPathComponent("installed", isDirectory: true)
+            try FileManager.default.createDirectory(at: source, withIntermediateDirectories: true)
+            defer { try? FileManager.default.removeItem(at: root) }
+            let parameter = source.appendingPathComponent("sample-4x.param")
+            let weights = source.appendingPathComponent("sample-4x.bin")
+            try Data("parameter".utf8).write(to: parameter)
+            try Data("weights".utf8).write(to: weights)
+            let model = try UpscaleModelCatalog.importPair(parameter: parameter, weights: weights, into: installed)
+            try expectEqual(model.name, "sample-4x")
+            try expectEqual(UpscaleModelCatalog.models(in: installed).map(\.name), ["sample-4x"])
+            try expectEqual(try Data(contentsOf: model.weightFile), Data("weights".utf8))
+            try expect(FileManager.default.fileExists(atPath: weights.path), "import must keep source model files")
+            let second = try UpscaleModelCatalog.importPair(parameter: parameter, weights: weights, into: installed)
+            try expect(model.directory != second.directory, "repeated imports must not overwrite")
+            let mismatched = source.appendingPathComponent("other-4x.bin")
+            try Data("other".utf8).write(to: mismatched)
+            do {
+                _ = try UpscaleModelCatalog.importPair(parameter: parameter, weights: mismatched, into: installed)
+                throw TestFailure(description: "mismatched pair accepted")
+            } catch is TestFailure { throw TestFailure(description: "mismatched pair accepted") }
+            catch { /* expected */ }
+            try expectEqual(UpscaleModelCatalog.models(in: installed).count, 2)
+            let ultrasharp = UpscaleModel(name: "ultrasharp-4x", directory: installed,
+                                         parameterFile: parameter, weightFile: weights)
+            try expectEqual(ultrasharp.displayName, "UltraSharp 4× · non-commercial")
+            try expectEqual(ultrasharp.nativeScale, 4)
+        }
+
+        runner.test("upscaler uses fixed file arguments and validates scale and format") {
+            let root = URL(fileURLWithPath: "/tmp/test model")
+            let model = UpscaleModel(name: "example-4x", directory: root,
+                parameterFile: root.appendingPathComponent("example-4x.param"),
+                weightFile: root.appendingPathComponent("example-4x.bin"))
+            let input = URL(fileURLWithPath: "/tmp/photo; touch nope.png")
+            let output = URL(fileURLWithPath: "/tmp/result.png")
+            let args = try UpscaleEngine.arguments(input: input, output: output, model: model, scale: 4, format: .png)
+            try expectEqual(args, ["-i", input.path, "-o", output.path, "-m", root.path,
+                                   "-n", "example-4x", "-s", "4", "-f", "png"])
+            try expectEqual(try UpscaleEngine.stages(nativeScale: 4, requestedScale: 8), [
+                .init(inputScale: 1, inferredScale: 4, outputScale: 2),
+                .init(inputScale: 2, inferredScale: 8, outputScale: 8),
+            ])
+            try expectEqual(try UpscaleEngine.stages(nativeScale: 4, requestedScale: 5), [
+                .init(inputScale: 1, inferredScale: 4, outputScale: 2),
+                .init(inputScale: 2, inferredScale: 8, outputScale: 5),
+            ])
+            try expectEqual(try UpscaleEngine.stages(nativeScale: 2, requestedScale: 8).count, 3)
+            try expectEqual(UpscaleEngine.maximumSafeScale(for: [CGSize(width: 409, height: 512)], nativeScale: 4), 8)
+            try expectEqual(UpscaleEngine.maximumSafeScale(for: [CGSize(width: 2048, height: 2560)], nativeScale: 4), 4)
+            try expectEqual(UpscaleEngine.maximumSafeScale(for: [CGSize(width: 5256, height: 5264)], nativeScale: 4), 0)
+            do {
+                _ = try UpscaleEngine.arguments(input: input, output: output, model: model, scale: 8, format: .png)
+                throw TestFailure(description: "unsupported scale accepted")
+            } catch is TestFailure { throw TestFailure(description: "unsupported scale accepted") }
+            catch { /* expected */ }
+            let selected = [URL(fileURLWithPath: "/tmp/a/photo.png"), URL(fileURLWithPath: "/tmp/b/photo.jpg")]
+            let destinations = UpscaleEngine.destinations(for: selected, scale: 4, format: .png) { _ in root }
+            try expectEqual(destinations.count, 2)
+            try expect(destinations[0] != destinations[1], "same-name batch inputs must reserve distinct outputs")
+            try expect(destinations.allSatisfy { $0.lastPathComponent.contains("upscaled 4x") }, "output names should identify the operation")
+        }
+
+        await runner.testAsync("bundled upscaler creates a readable new copy without changing its source") {
+            let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString, isDirectory: true)
+            try FileManager.default.createDirectory(at: root, withIntermediateDirectories: false)
+            defer { try? FileManager.default.removeItem(at: root) }
+            let source = root.appendingPathComponent("tiny.png")
+            guard let context = CGContext(data: nil, width: 64, height: 64, bitsPerComponent: 8,
+                bytesPerRow: 0, space: CGColorSpace(name: CGColorSpace.sRGB)!,
+                bitmapInfo: CGImageAlphaInfo.noneSkipLast.rawValue) else {
+                throw TestFailure(description: "Could not create source bitmap")
+            }
+            for (x, y, color) in [(0, 0, CGColor(red: 1, green: 0, blue: 0, alpha: 1)),
+                                  (32, 0, CGColor(red: 0, green: 1, blue: 0, alpha: 1)),
+                                  (0, 32, CGColor(red: 0, green: 0, blue: 1, alpha: 1)),
+                                  (32, 32, CGColor(red: 1, green: 1, blue: 0, alpha: 1))] {
+                context.setFillColor(color)
+                context.fill(CGRect(x: x, y: y, width: 32, height: 32))
+            }
+            guard let image = context.makeImage() else { throw TestFailure(description: "Could not render source bitmap") }
+            let bitmap = NSBitmapImageRep(cgImage: image)
+            try ImageIOBridge.write(image, to: source, format: .png)
+            let original = try Data(contentsOf: source)
+            let bundled = URL(fileURLWithPath: FileManager.default.currentDirectoryPath)
+                .appendingPathComponent("Resources/Upscaler", isDirectory: true)
+            let models = UpscaleModelCatalog.models(in: bundled.appendingPathComponent("models"), nested: false)
+            guard let model = models.first, model.name == "realesr-animevideov3-x4" else {
+                throw TestFailure(description: "Pinned bundled model missing")
+            }
+            let destination = root.appendingPathComponent("tiny upscaled 2x.png")
+            let produced = try await UpscaleEngine.upscale(source: source, destination: destination, model: model,
+                scale: 2, format: .png, executable: bundled.appendingPathComponent("realesrgan-ncnn-vulkan"))
+            try expectEqual(produced, destination)
+            try expectEqual(ImageIOBridge.pixelSize(produced), CGSize(width: 128, height: 128))
+            let outputBitmap = NSBitmapImageRep(cgImage: try ImageIOBridge.load(produced))
+            for (x, y) in [(8, 8), (56, 8), (8, 56), (56, 56)] {
+                guard let originalColor = bitmap.colorAt(x: x, y: y)?.usingColorSpace(.deviceRGB),
+                      let outputColor = outputBitmap.colorAt(x: x * 2, y: y * 2)?.usingColorSpace(.deviceRGB) else {
+                    throw TestFailure(description: "Could not sample upscaled image")
+                }
+                let difference = abs(originalColor.redComponent - outputColor.redComponent)
+                    + abs(originalColor.greenComponent - outputColor.greenComponent)
+                    + abs(originalColor.blueComponent - outputColor.blueComponent)
+                try expect(difference < 0.6, "2× output moved image quadrants")
+            }
+            try expectEqual(try Data(contentsOf: source), original)
+            let firstOutput = try Data(contentsOf: produced)
+            do {
+                _ = try await UpscaleEngine.upscale(source: source, destination: destination, model: model,
+                    scale: 2, format: .png, executable: bundled.appendingPathComponent("realesrgan-ncnn-vulkan"))
+                throw TestFailure(description: "upscaler replaced an occupied output")
+            } catch is TestFailure { throw TestFailure(description: "upscaler replaced an occupied output") }
+            catch { /* expected: occupied destination */ }
+            try expectEqual(try Data(contentsOf: destination), firstOutput)
+            try expectEqual(try Data(contentsOf: source), original)
+            let leftovers = try FileManager.default.contentsOfDirectory(atPath: root.path)
+            try expect(!leftovers.contains { $0.hasPrefix(".zeroclick-") }, "failed publication left a staged output")
+            let cancelledDestination = root.appendingPathComponent("cancelled.png")
+            let cancelled = Task { () throws -> [URL] in
+                withUnsafeCurrentTask { $0?.cancel() }
+                return try await UpscaleEngine.upscaleBatch(files: [source], destinations: [cancelledDestination],
+                    model: model, scale: 2, format: .png,
+                    executable: bundled.appendingPathComponent("realesrgan-ncnn-vulkan")) { _ in }
+            }
+            do {
+                _ = try await cancelled.value
+                throw TestFailure(description: "cancelled upscaler published an output")
+            } catch is TestFailure { throw TestFailure(description: "cancelled upscaler published an output") }
+            catch { /* expected */ }
+            try expect(!FileManager.default.fileExists(atPath: cancelledDestination.path), "cancelled run published output")
+            // The backend rejects UUID-named model folders directly. Exercise
+            // the same imported-folder layout used by the personal model UI.
+            let personal = try UpscaleModelCatalog.importPair(parameter: model.parameterFile,
+                weights: model.weightFile, into: root.appendingPathComponent("PersonalModels"))
+            let personalOutput = root.appendingPathComponent("personal upscaled.png")
+            _ = try await UpscaleEngine.upscale(source: source, destination: personalOutput,
+                model: personal, scale: 4, format: .png,
+                executable: bundled.appendingPathComponent("realesrgan-ncnn-vulkan"))
+            try expectEqual(ImageIOBridge.pixelSize(personalOutput), CGSize(width: 256, height: 256))
+            let eightOutput = root.appendingPathComponent("personal upscaled 8x.png")
+            _ = try await UpscaleEngine.upscale(source: source, destination: eightOutput,
+                model: personal, scale: 8, format: .png,
+                executable: bundled.appendingPathComponent("realesrgan-ncnn-vulkan"))
+            try expectEqual(ImageIOBridge.pixelSize(eightOutput), CGSize(width: 512, height: 512))
+            guard let previewData = ImageIOBridge.boundedPreviewData(eightOutput, maxPixelSize: 96) else {
+                throw TestFailure(description: "Bounded upscaler preview failed")
+            }
+            let boundedPreview = root.appendingPathComponent("bounded-preview.png")
+            try previewData.write(to: boundedPreview)
+            try expectEqual(ImageIOBridge.pixelSize(boundedPreview), CGSize(width: 96, height: 96))
+            let eightBitmap = NSBitmapImageRep(cgImage: try ImageIOBridge.load(eightOutput))
+            for (x, y) in [(8, 8), (56, 8), (8, 56), (56, 56)] {
+                guard let originalColor = bitmap.colorAt(x: x, y: y)?.usingColorSpace(.deviceRGB),
+                      let outputColor = eightBitmap.colorAt(x: x * 8, y: y * 8)?.usingColorSpace(.deviceRGB) else {
+                    throw TestFailure(description: "Could not sample 8× output")
+                }
+                let difference = abs(originalColor.redComponent - outputColor.redComponent)
+                    + abs(originalColor.greenComponent - outputColor.greenComponent)
+                    + abs(originalColor.blueComponent - outputColor.blueComponent)
+                try expect(difference < 0.7, "8× output moved image quadrants")
+            }
+            let fiveOutput = root.appendingPathComponent("personal upscaled 5x.png")
+            _ = try await UpscaleEngine.upscale(source: source, destination: fiveOutput,
+                model: personal, scale: 5, format: .png,
+                executable: bundled.appendingPathComponent("realesrgan-ncnn-vulkan"))
+            try expectEqual(ImageIOBridge.pixelSize(fiveOutput), CGSize(width: 320, height: 320))
+            try expectEqual(try Data(contentsOf: source), original)
+        }
+
         runner.test("conversion matrix has 190 options") {
             try expectEqual(ConversionMatrix.totalConversions, 190)
         }
 
-        runner.test("31 advanced tools") {
-            try expectEqual(ToolID.total, 31)
+        runner.test("32 advanced tools") {
+            try expectEqual(ToolID.total, 32)
         }
 
         runner.test("action registry filters conversion and tools") {
@@ -89,6 +261,9 @@ struct SatsumaTests {
             try expect(pdf.contains { $0.action == .tool(.mergePDF) }, "PDF pair must offer merge")
             try expect(!pdf.contains { $0.action == .tool(.cropImage) }, "PDF should not show unrelated image tools")
             try expect(pdf.contains { $0.action == .tool(.unlockPDF) && !$0.isEnabled }, "Plain PDF should show disabled Unlock PDF")
+            let imageTools = ActionRegistry.items(for: .tools, formats: [.png])
+            try expect(imageTools.contains { $0.action == .tool(.upscaleImage) }, "PNG must show Upscale")
+            try expect(!pdf.contains { $0.action == .tool(.upscaleImage) }, "PDF should not show image upscaling")
         }
 
         runner.test("mixed selections expose only common actions") {

@@ -116,7 +116,10 @@ enum ActionRegistry {
                 }
             }
             return ToolID.available(for: formats)
-                .filter { $0 != .unlockPDF && $0 != .unlockZIP && $0 != .decryptFile }
+                .filter { tool in
+                    tool != .unlockPDF && tool != .unlockZIP && tool != .decryptFile &&
+                    (tool != .upscaleImage || (UpscaleEngine.executable != nil && !UpscaleModelCatalog.bundledModels.isEmpty))
+                }
     }
 
     private static func availableActions(for formats: [FileFormat], urls: [URL]) -> [FileAction] {

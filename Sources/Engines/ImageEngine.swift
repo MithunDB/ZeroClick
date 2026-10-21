@@ -77,6 +77,25 @@ enum ImageIOBridge {
         return CGSize(width: width, height: height)
     }
 
+    // UI previews must never fall back to a full-resolution decode. Call this
+    // off the main thread, especially for a large or compressed source image.
+    static func boundedPreviewData(_ url: URL, maxPixelSize: Int) -> Data? {
+        guard maxPixelSize > 0,
+              let source = CGImageSourceCreateWithURL(url as CFURL, nil) else { return nil }
+        let options: [CFString: Any] = [
+            kCGImageSourceCreateThumbnailFromImageAlways: true,
+            kCGImageSourceCreateThumbnailWithTransform: true,
+            kCGImageSourceShouldCacheImmediately: true,
+            kCGImageSourceThumbnailMaxPixelSize: maxPixelSize,
+        ]
+        guard let thumbnail = CGImageSourceCreateThumbnailAtIndex(source, 0, options as CFDictionary) else { return nil }
+        let data = NSMutableData()
+        guard let destination = CGImageDestinationCreateWithData(data, UTType.png.identifier as CFString, 1, nil) else { return nil }
+        CGImageDestinationAddImage(destination, thumbnail, nil)
+        guard CGImageDestinationFinalize(destination) else { return nil }
+        return data as Data
+    }
+
     static func write(_ image: CGImage, to url: URL, format: FileFormat, quality: Double = 0.9, metadata: [CFString: Any]? = nil) throws {
         guard let type = format.utType, nativeEncoders.contains(type.identifier) else {
             throw SatsumaError.encodeFailed("\(format.displayName) natively")

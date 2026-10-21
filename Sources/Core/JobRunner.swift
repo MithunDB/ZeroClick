@@ -139,7 +139,6 @@ final class JobRunner: ObservableObject {
     func cancel(_ job: Job) {
         DiagnosticLog.log("cancel requested: \(job.detail)")
         job.task?.cancel()
-        dismiss(job)
     }
 
     func cancelAll() {
@@ -481,7 +480,7 @@ struct JobHUDView: View {
         VStack(alignment: .leading, spacing: 14) {
             ForEach(Array(runner.jobs.enumerated()), id: \.element.id) { index, job in
                 if index > 0 { Divider() }
-                JobCardView(job: job)
+                JobCardView(job: job) { runner.cancel(job) }
             }
         }
         .padding(.top, 12)
@@ -496,6 +495,7 @@ struct JobHUDView: View {
 
 struct JobCardView: View {
     @ObservedObject var job: Job
+    let onCancel: () -> Void
 
     var body: some View {
         VStack(alignment: .leading, spacing: 8) {
@@ -541,7 +541,9 @@ struct JobCardView: View {
         case .cancelled:
             Image(systemName: "xmark.circle").foregroundStyle(.secondary)
         case .waiting, .running:
-            EmptyView()
+            Button("Cancel", action: onCancel)
+                .buttonStyle(.borderless)
+                .accessibilityLabel("Cancel \(job.title)")
         }
     }
 }

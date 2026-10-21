@@ -1,0 +1,28 @@
+ZeroClick for Apple silicon Macs (macOS 26 or later)
+
+1. Unzip the download and move ZeroClick.app into Applications.
+2. Open it from Applications. ZeroClick runs in the menu bar, not the Dock.
+3. In Finder, drag a file while holding Shift for conversions,
+   Shift+Option for tools, Command for file actions, or Option for the
+   visible but disabled AI preview.
+
+This private build is ad-hoc signed, not Developer ID notarized. If macOS
+blocks its first launch, use System Settings > Privacy & Security to allow
+opening ZeroClick. Do not disable Gatekeeper system-wide.
+
+Outputs are new files, normally beside their sources. The explicit Move
+action relocates a file. No account, cloud service, telemetry, or AI
+backend is included.
+
+Upscale includes one fast, illustration-oriented Real-ESRGAN model. Optional
+personal models such as Upscayl Lite, UltraSharp, and Ultramix Balanced are
+not in this download and are not downloaded by the app. To use compatible
+NCNN models on another Mac, obtain each matching .param/.bin pair yourself
+and choose Upscale > Import local model. Imported files stay in
+~/Library/Application Support/ZeroClick/Models/. UltraSharp and Ultramix
+Balanced are marked non-commercial by Upscayl; follow their creators'
+terms and attribution requirements.
+
+The app's bundled engine and model notices are in
+ZeroClick.app/Contents/Resources/Resources/Upscaler/Notices/.
+The included LICENSE preserves the upstream Satsuma MIT terms.

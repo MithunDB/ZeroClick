@@ -92,6 +92,8 @@ final class ToolWindowManager: NSObject, NSWindowDelegate {
             return NSSize(width: 640, height: 560)
         case .resizeImage:
             return NSSize(width: 620, height: 400)
+        case .upscaleImage:
+            return NSSize(width: 920, height: 620)
         case .createPDF, .mergePDF, .unlockPDF, .unlockZIP, .hideMessage, .revealMessage, .encryptFile, .decryptFile:
             return NSSize(width: 680, height: 440)
         case .splitPDF, .audioChannels:
@@ -129,6 +131,7 @@ struct ToolRootView: View {
             case .cropImage: CropImageToolView(session: session)
             case .redactImage: RedactImageToolView(session: session)
             case .resizeImage: ResizeImageToolView(session: session)
+            case .upscaleImage: UpscaleImageToolView(session: session)
             case .rotateImage: RotateImageToolView(session: session)
             case .createPDF: CreatePDFToolView(session: session)
             case .createCollage: CollageToolView(session: session)
