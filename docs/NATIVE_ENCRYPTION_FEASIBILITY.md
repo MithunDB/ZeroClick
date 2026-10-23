@@ -6,14 +6,14 @@ This began as a feasibility record. The current local implementation offers `.ae
 
 - `.aea`: AppleArchive public API, one regular file up to 2 GB, at least 20 UTF-8 password bytes, staged output, cancellation and wrong-password cleanup. Tested against a crowded Finder-like directory, malformed/multiple/symlink entries, occupied names, and a cancelled 48 MB archive.
 - `.dmg`: `diskutil image create from --encrypt --stdinpassphrase --format ULFO` makes an AES-256 disk image from an isolated one-file folder. ZeroClick checks its encryption flag with `hdiutil isencrypted -plist`, attaches read-only and hidden through `diskutil image attach --plist`, copies one regular visible file into private staging, ejects the root device, then publishes a collision-safe copy. Passwords are supplied through stdin, not argv. Automated correct/wrong-password, occupied-name, and pre-cancelled extraction checks and disposable Finder round trips pass. The maximum source and extracted file size is 2 GB; folders are not supported. A disk-image cleanup failure blocks publication and gives the device to eject in Disk Utility. GitHub's macOS runner additionally requires the temporary mount-point directory to exist before attach; that path has a regression check.
-- `.zclick` decryption remains available; new `.zclick` creation is no longer offered after disposable Finder encrypt/decrypt round trips passed for both native formats. PNG hidden-message encryption, protected PDF/ZIP unlocking, and existing files remain unchanged.
+- `.zclick` decryption remains available; new `.zclick` creation is no longer offered after disposable Finder encrypt/decrypt round trips passed for both native formats. PNG hidden messages now use only OpenStego RandomLSB. Protected PDF/ZIP unlocking remains unchanged.
 - The current local test suite passes 82/82. The verified release build, strict signature, clean 15-entry ZIP, and extracted resource hashes pass locally. No remote release has been published for this work.
 
 ## Baseline and architecture
 
 - `scripts/check.sh` built the debug app and passed 73/73 tests plus the privileged-read file-gate smoke test. The required upscaler resources passed their SHA-256 and allowlist checks. Optional `swift-format` and SwiftLint were unavailable and skipped by the script.
 - Finder Upscale on a new disposable 512×512 PNG generated a preview and a 1024×1024 new copy beside its source. The source remains 512×512.
-- `Sources/Engines/SecureFile.swift` owns both `.zclick` file encryption/decryption and the password-protected payload used by `PNGSteganography.swift`. Legacy file decryption and PNG hide/reveal must survive migration.
+- `Sources/Engines/SecureFile.swift` retains the legacy `.zclick` file reader. The former ZeroClick-specific PNG crypto and `PNGSteganography.swift` were removed after OpenStego RandomLSB became the sole PNG Hide/Reveal format.
 - `Sources/Tools/AnyFile/SecureFileToolView.swift` currently offers only `.zclick` encryption/decryption. `Sources/Radial/ActionRegistry.swift` filters these contextual actions. `AppSettings.swift` has no native-encryption format setting.
 - `scripts/prepare-upscaler.sh` downloads pinned ZIPs and stages the verified engine/model; `scripts/check.sh` requires the exact resource allowlist. `.brisk.toml` currently has no pre-build hook. The inherited CI still names Satsuma and uploads screenshots/crash artifacts.
 
@@ -33,6 +33,6 @@ The proposed `-type SPARSE` recipe was **not** used: this tested artifact is a c
 
 ## Next implementation gate
 
-Build a small native `.aea` engine around the proven Swift archive stream, with staged collision-safe outputs, password secrecy, and extraction preflight. Add focused tests before exposing it in Settings or the Finder wheel. Keep the `.zclick` reader and PNG message crypto. Evaluate the disk-image path separately; do not present it as available until mount lifecycle and cancellation are verified.
+This was the original implementation gate and has since been completed for `.aea` and `.dmg`. The `.zclick` reader remains for legacy encrypted files; PNG messages use OpenStego RandomLSB rather than the former custom PNG crypto.
 
 Primary references: [Apple Archive encryption context](https://developer.apple.com/documentation/applearchive/archiveencryptioncontext), [Apple's single-file encryption example](https://developer.apple.com/documentation/applearchive/encrypting-and-decrypting-a-single-file), [Apple Archive stream API](https://developer.apple.com/documentation/applearchive/archivestream), [GitHub macOS runner images](https://github.com/actions/runner-images).

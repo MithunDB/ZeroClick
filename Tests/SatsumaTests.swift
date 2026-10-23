@@ -806,45 +806,6 @@ struct SatsumaTests {
             try expectEqual(size, 48 * 1024 * 1024, "cancelled AEA changed source size")
         }
 
-        runner.test("PNG hides and reveals password-protected text without changing its source") {
-            let folder = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
-            try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
-            defer { try? FileManager.default.removeItem(at: folder) }
-            let source = folder.appendingPathComponent("cover.png")
-            let image = CIImage(color: CIColor(red: 0.3, green: 0.6, blue: 0.8, alpha: 1))
-                .cropped(to: CGRect(x: 0, y: 0, width: 256, height: 256))
-            guard let cg = ImageToolSupport.cgImage(image) else { throw TestFailure(description: "Could not make PNG fixture") }
-            try ImageIOBridge.write(cg, to: source, format: .png)
-            let original = try Data(contentsOf: source)
-            let hidden = folder.appendingPathComponent("cover hidden.png")
-            _ = try PNGSteganography.hide("Meet at café ☕️", password: "test-stego-42", in: source, to: hidden)
-            try expect(try PNGSteganography.containsZeroClickMessage(hidden), "hidden copy must be identified without a password")
-            try expect(!(try PNGSteganography.containsZeroClickMessage(source)), "plain cover must not be identified as hidden")
-            try expectEqual(try PNGSteganography.reveal(from: hidden, password: "test-stego-42"), "Meet at café ☕️")
-            try expectEqual(try Data(contentsOf: source), original)
-            do {
-                _ = try PNGSteganography.reveal(from: hidden, password: "wrong")
-                throw TestFailure(description: "wrong password revealed message")
-            } catch is TestFailure {
-                throw TestFailure(description: "wrong password revealed message")
-            } catch {}
-            do {
-                _ = try PNGSteganography.reveal(from: source, password: "test-stego-42")
-                throw TestFailure(description: "cover without message reported one")
-            } catch is TestFailure {
-                throw TestFailure(description: "cover without message reported one")
-            } catch {}
-        }
-
-        runner.test("portable PNG message fixture opens in ZeroClick") {
-            let fixture = URL(fileURLWithPath: #filePath).deletingLastPathComponent()
-                .appendingPathComponent("Fixtures/zeroclick-portable-message.png")
-            try expect(try PNGSteganography.containsZeroClickMessage(fixture),
-                       "portable writer header was not detected")
-            try expectEqual(try PNGSteganography.reveal(from: fixture, password: "interop-test-42"),
-                            "Portable café ☕️")
-        }
-
         runner.test("OpenStego importer rejects an unrecognized JAR") {
             let fake = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString + ".jar")
             try Data("not OpenStego".utf8).write(to: fake)
@@ -863,8 +824,13 @@ struct SatsumaTests {
                 try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: false)
                 defer { try? FileManager.default.removeItem(at: folder) }
                 let jar = URL(fileURLWithPath: jarPath)
-                let source = URL(fileURLWithPath: #filePath).deletingLastPathComponent()
-                    .appendingPathComponent("Fixtures/zeroclick-portable-message.png")
+                let source = folder.appendingPathComponent("cover.png")
+                let image = CIImage(color: CIColor(red: 0.3, green: 0.6, blue: 0.8, alpha: 1))
+                    .cropped(to: CGRect(x: 0, y: 0, width: 256, height: 256))
+                guard let cg = ImageToolSupport.cgImage(image) else {
+                    throw TestFailure(description: "Could not make PNG fixture")
+                }
+                try ImageIOBridge.write(cg, to: source, format: .png)
                 let original = try Data(contentsOf: source)
                 let hidden = folder.appendingPathComponent("openstego hidden.png")
                 _ = try await OpenStegoBridge.hide("OpenStego café ☕️", password: "demo-openstego-42",
@@ -878,7 +844,8 @@ struct SatsumaTests {
                 } catch is TestFailure {
                     throw TestFailure(description: "wrong OpenStego password worked")
                 } catch {}
-                try expectEqual(try FileManager.default.contentsOfDirectory(atPath: folder.path), [hidden.lastPathComponent],
+                try expectEqual(try FileManager.default.contentsOfDirectory(atPath: folder.path).sorted(),
+                                [source.lastPathComponent, hidden.lastPathComponent].sorted(),
                                 "OpenStego left plaintext or staged files")
             }
         }

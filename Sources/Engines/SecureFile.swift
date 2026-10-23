@@ -7,30 +7,6 @@ enum SecureFile {
     private static let iterations: UInt32 = 250_000
     private static let maxInput = 512 * 1024 * 1024
 
-    static func sealMessage(_ message: String, password: String) throws -> Data {
-        guard !message.isEmpty, !password.isEmpty else { throw SatsumaError.invalidInput("Enter a message and password.") }
-        guard message.utf8.count <= 64 * 1024 else { throw SatsumaError.invalidInput("Message exceeds 64 KB.") }
-        let salt = Data((0..<16).map { _ in UInt8.random(in: 0...255) })
-        let key = try deriveKey(password: password, salt: salt)
-        let box = try AES.GCM.seal(Data(message.utf8), using: key)
-        guard let combined = box.combined else { throw SatsumaError.invalidInput("Could not encrypt message.") }
-        return salt + combined
-    }
-
-    static func openMessage(_ payload: Data, password: String) throws -> String {
-        guard payload.count >= 16 + 28 else { throw SatsumaError.invalidInput("Hidden message is damaged.") }
-        let key = try deriveKey(password: password, salt: Data(payload.prefix(16)))
-        do {
-            let data = try AES.GCM.open(AES.GCM.SealedBox(combined: payload.dropFirst(16)), using: key)
-            guard let message = String(data: data, encoding: .utf8) else {
-                throw SatsumaError.invalidInput("Hidden message is damaged.")
-            }
-            return message
-        } catch {
-            throw SatsumaError.invalidInput("Incorrect password or damaged hidden message.")
-        }
-    }
-
     static func isEncrypted(_ url: URL) -> Bool {
         guard let handle = try? FileHandle(forReadingFrom: url) else { return false }
         defer { try? handle.close() }
