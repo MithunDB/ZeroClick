@@ -836,6 +836,15 @@ struct SatsumaTests {
             } catch {}
         }
 
+        runner.test("portable PNG message fixture opens in ZeroClick") {
+            let fixture = URL(fileURLWithPath: #filePath).deletingLastPathComponent()
+                .appendingPathComponent("Fixtures/zeroclick-portable-message.png")
+            try expect(try PNGSteganography.containsZeroClickMessage(fixture),
+                       "portable writer header was not detected")
+            try expectEqual(try PNGSteganography.reveal(from: fixture, password: "interop-test-42"),
+                            "Portable café ☕️")
+        }
+
         runner.test("Markdown PDF renders headings and emphasis without literal markers") {
             let folder = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
             try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
