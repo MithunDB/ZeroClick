@@ -624,7 +624,12 @@ struct SatsumaTests {
                 _ = try await NativeDiskImage.decrypt(protected, password: "disposable-dmg-password", into: folder)
                 throw TestFailure(description: "multi-file DMG decrypted")
             } catch is TestFailure { throw TestFailure(description: "multi-file DMG decrypted") }
-            catch {}
+            catch SatsumaError.invalidInput(let reason) {
+                try expect(reason.contains("exactly one regular file"),
+                    "multi-file DMG failed before content validation: \(reason)")
+            } catch {
+                throw TestFailure(description: "multi-file DMG failed before content validation: \(error)")
+            }
             try expectEqual(try FileManager.default.contentsOfDirectory(atPath: folder.path).sorted(), before,
                 "rejected DMG left output")
         }

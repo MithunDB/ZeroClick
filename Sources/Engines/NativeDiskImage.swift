@@ -58,7 +58,7 @@ enum NativeDiskImage {
         }
         let workspace = FileManager.default.temporaryDirectory.appendingPathComponent("zeroclick-dmg-\(UUID().uuidString)")
         let mount = workspace.appendingPathComponent("mount")
-        try FileManager.default.createDirectory(at: workspace, withIntermediateDirectories: true)
+        try FileManager.default.createDirectory(at: mount, withIntermediateDirectories: true)
         var attachedDevice: String?
         defer { if attachedDevice == nil { try? FileManager.default.removeItem(at: workspace) } }
         // Do not cancel an attach halfway through: its device must be discovered and ejected.
