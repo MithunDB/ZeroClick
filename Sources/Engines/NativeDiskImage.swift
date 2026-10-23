@@ -66,7 +66,11 @@ enum NativeDiskImage {
             ["image", "attach", "--stdinpassphrase", "--readOnly", "--nobrowse", "--mountPoint", mount.path,
              "--plist", source.path], input: Data((password + "\n").utf8))
         guard attached.succeeded else {
-            throw SatsumaError.invalidInput("The disk image could not be opened. Check the password and image integrity.")
+            let detail = attached.stderr.replacingOccurrences(of: password, with: "[redacted]")
+                .trimmingCharacters(in: .whitespacesAndNewlines)
+            let summary = detail.isEmpty ? "diskutil exited with status \(attached.status)." :
+                String(detail.prefix(240))
+            throw SatsumaError.invalidInput("The disk image could not be opened. Check the password and image integrity. System detail: \(summary)")
         }
         let device = try deviceEntry(from: attached.stdout)
         attachedDevice = device
