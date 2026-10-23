@@ -34,7 +34,7 @@ jobs:
           echo "$RUNNER_TEMP" >> "$GITHUB_PATH"
       - name: Install FFmpeg
         run: brew install ffmpeg
-      - name: Build and validate private package
+      - name: Build and validate local package
         run: scripts/build-verified.sh release
       - name: Stage package
         run: |
@@ -84,4 +84,4 @@ jobs:
           shasum -a 256 -c SHA256SUMS
           gh release create "$RELEASE_TAG" ZeroClick-macOS-arm64.zip SHA256SUMS \
             --verify-tag --title "ZeroClick $RELEASE_TAG" \
-            --notes "Private macOS arm64 build. Download the ZIP, extract ZeroClick.app, and open it on your Mac."
+            --notes "macOS arm64 build. Download the ZIP, extract ZeroClick.app, and open it on your Mac."

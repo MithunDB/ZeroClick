@@ -6,7 +6,7 @@ ZeroClick for Apple silicon Macs (macOS 26 or later)
    Shift+Option for tools, Command for file actions, or Option for the
    visible but disabled AI preview.
 
-This private build is ad-hoc signed, not Developer ID notarized. If macOS
+This test build is ad-hoc signed, not Developer ID notarized. If macOS
 blocks its first launch, use System Settings > Privacy & Security to allow
 opening ZeroClick. Do not disable Gatekeeper system-wide.
 

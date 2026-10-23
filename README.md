@@ -26,7 +26,7 @@ Password-protected PDFs can be unlocked into a separate unprotected copy. The or
 
 ## Quick start
 
-1. Open [Releases](https://github.com/MithunDB/ZeroClick/releases) and download the **ZeroClick-macOS-arm64.zip** asset. The automatic GitHub “Source code” archives contain source, not the app.
+1. For a test build, open the latest successful [Package ZeroClick run](https://github.com/MithunDB/ZeroClick/actions/workflows/release.yml) and download its **ZeroClick-macOS-arm64** artifact. When a formal release is published, use its **ZeroClick-macOS-arm64.zip** asset on the [Releases page](https://github.com/MithunDB/ZeroClick/releases). The automatic GitHub “Source code” archives contain source, not the app.
 2. Unzip it, then move **ZeroClick.app** to Applications.
 3. Open the app. It lives in the menu bar, so it will not add a Dock icon.
 4. Start dragging a file in Finder and hold a modifier to show a wheel:
@@ -38,7 +38,7 @@ Password-protected PDFs can be unlocked into a separate unprotected copy. The or
 | **Command** | File actions | Copy Path, Duplicate, Move, ZIP, and more |
 | **Option** | AI · Coming later | Shows planned actions; nothing runs |
 
-ZeroClick requires an **Apple silicon Mac with macOS 26 or later**. The downloadable app does **not** require Brisk, Xcode, or a Git clone. Some non-native media formats need optional `ffmpeg`; RAR decoding uses macOS `bsdtar`. This private build is ad-hoc signed, not Developer ID notarized, so macOS may ask you to approve opening it in **System Settings → Privacy & Security** on first launch.
+ZeroClick requires an **Apple silicon Mac with macOS 26 or later**. The downloadable app does **not** require Brisk, Xcode, or a Git clone. Some non-native media formats need optional `ffmpeg`; RAR decoding uses macOS `bsdtar`. This test build is ad-hoc signed, not Developer ID notarized, so macOS may ask you to approve opening it in **System Settings → Privacy & Security** on first launch.
 
 ## What's inside
 
