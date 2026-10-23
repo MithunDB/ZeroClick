@@ -27,6 +27,16 @@ jobs:
           echo "$RUNNER_TEMP" >> "$GITHUB_PATH"
       - name: Install optional FFmpeg used by media tests
         run: brew install ffmpeg
+      - name: Prepare pinned OpenStego interoperability test tool
+        run: |
+          curl --fail --location --silent --show-error --retry 3 \
+            https://github.com/syvaidya/openstego/releases/download/openstego-0.8.6/openstego-0.8.6.zip \
+            --output "$RUNNER_TEMP/openstego-0.8.6.zip"
+          printf '%s  %s\n' \
+            '402ba4190d329564996a1250b9096f0402452042469f517545c312527cedc41f' \
+            "$RUNNER_TEMP/openstego-0.8.6.zip" | shasum -a 256 -c -
+          unzip -q "$RUNNER_TEMP/openstego-0.8.6.zip" -d "$RUNNER_TEMP"
+          echo "ZEROCLICK_OPENSTEGO_TEST_JAR=$RUNNER_TEMP/openstego-0.8.6/lib/openstego.jar" >> "$GITHUB_ENV"
       - name: Record toolchain
         run: |
           sw_vers

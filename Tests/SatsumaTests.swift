@@ -845,6 +845,44 @@ struct SatsumaTests {
                             "Portable café ☕️")
         }
 
+        runner.test("OpenStego importer rejects an unrecognized JAR") {
+            let fake = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString + ".jar")
+            try Data("not OpenStego".utf8).write(to: fake)
+            defer { try? FileManager.default.removeItem(at: fake) }
+            do {
+                _ = try OpenStegoBridge.importJar(fake)
+                throw TestFailure(description: "unrecognized JAR was accepted")
+            } catch is TestFailure {
+                throw TestFailure(description: "unrecognized JAR was accepted")
+            } catch {}
+        }
+
+        if let jarPath = ProcessInfo.processInfo.environment["ZEROCLICK_OPENSTEGO_TEST_JAR"] {
+            await runner.testAsync("OpenStego RandomLSB interoperates without changing originals") {
+                let folder = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+                try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: false)
+                defer { try? FileManager.default.removeItem(at: folder) }
+                let jar = URL(fileURLWithPath: jarPath)
+                let source = URL(fileURLWithPath: #filePath).deletingLastPathComponent()
+                    .appendingPathComponent("Fixtures/zeroclick-portable-message.png")
+                let original = try Data(contentsOf: source)
+                let hidden = folder.appendingPathComponent("openstego hidden.png")
+                _ = try await OpenStegoBridge.hide("OpenStego café ☕️", password: "demo-openstego-42",
+                                                   in: source, to: hidden, jarOverride: jar)
+                try expectEqual(try await OpenStegoBridge.reveal(from: hidden,
+                                password: "demo-openstego-42", jarOverride: jar), "OpenStego café ☕️")
+                try expectEqual(try Data(contentsOf: source), original, "OpenStego changed the cover")
+                do {
+                    _ = try await OpenStegoBridge.reveal(from: hidden, password: "wrong", jarOverride: jar)
+                    throw TestFailure(description: "wrong OpenStego password worked")
+                } catch is TestFailure {
+                    throw TestFailure(description: "wrong OpenStego password worked")
+                } catch {}
+                try expectEqual(try FileManager.default.contentsOfDirectory(atPath: folder.path), [hidden.lastPathComponent],
+                                "OpenStego left plaintext or staged files")
+            }
+        }
+
         runner.test("Markdown PDF renders headings and emphasis without literal markers") {
             let folder = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
             try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)

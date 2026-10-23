@@ -1,4 +1,12 @@
+import AppKit
 import SwiftUI
+import UniformTypeIdentifiers
+
+private enum PNGMessageFormat: String, CaseIterable, Identifiable {
+    case zeroClick = "ZeroClick"
+    case openStego = "OpenStego RandomLSB"
+    var id: String { rawValue }
+}
 
 @MainActor
 struct PNGMessageToolView: View {
@@ -10,22 +18,49 @@ struct PNGMessageToolView: View {
     @State private var revealed: String?
     @State private var errorMessage: String?
     @State private var detectedMessage: Bool?
+    @State private var format: PNGMessageFormat = .zeroClick
+    @State private var openStegoReady = false
+    @State private var isWorking = false
+    @State private var revealTask: Task<Void, Never>?
+
+    private var canRun: Bool {
+        guard !isWorking, !password.isEmpty else { return false }
+        if format == .openStego, (!openStegoReady || !OpenStegoBridge.javaAvailable) { return false }
+        return revealing ? (format == .openStego || detectedMessage == true)
+                         : (!message.isEmpty && message.utf8.count <= 65_536 && password == confirmation)
+    }
 
     var body: some View {
         FormShell(session: session,
                   saveTitle: revealing ? "Reveal message" : "Save hidden copy",
-                  saveEnabled: !password.isEmpty && (revealing ? detectedMessage == true : (!message.isEmpty && message.utf8.count <= 65_536 && password == confirmation)),
+                  saveEnabled: canRun,
                   onSave: perform) {
             FormHeading(revealing ? "Reveal hidden message" : "Hide a message in PNG")
+            Picker("Format", selection: $format) {
+                ForEach(PNGMessageFormat.allCases) { option in Text(option.rawValue).tag(option) }
+            }
+            .pickerStyle(.segmented)
             FormHint(revealing
                      ? "Enter the password used to hide the message. The original image stays unchanged."
-                     : "ZeroClick will make a visually similar PNG copy with an encrypted message hidden in its pixels. Re-saving or resizing the copy may erase the message.")
+                     : "A new PNG copy holds the encrypted message. Resizing or re-saving it may erase the message.")
             if revealing {
-                Text(detectedMessage == nil ? "Checking this image for a ZeroClick message…"
+                Text(format == .openStego ? "Try this mode for an image made with OpenStego RandomLSB."
+                     : detectedMessage == nil ? "Checking this image for a ZeroClick message…"
                      : detectedMessage == true ? "ZeroClick hidden message detected. Enter its password to reveal it."
-                     : "No ZeroClick message detected. Other steganography formats cannot be decoded here.")
+                     : "No ZeroClick message detected. If OpenStego made this image, choose that format.")
                     .font(.callout)
-                    .foregroundStyle(detectedMessage == true ? .green : .secondary)
+                    .foregroundStyle(format == .zeroClick && detectedMessage == true ? .green : .secondary)
+            }
+            if format == .openStego {
+                if openStegoReady && OpenStegoBridge.javaAvailable {
+                    Text("OpenStego 0.8.6 is ready. The password stays out of process arguments.")
+                        .font(.callout).foregroundStyle(.green)
+                } else {
+                    Text("This optional format needs Java and the official OpenStego 0.8.6 JAR imported once. It is not bundled with ZeroClick.")
+                        .font(.callout).foregroundStyle(.secondary)
+                    Button("Import OpenStego JAR…", action: importOpenStego)
+                    Link("Get OpenStego 0.8.6", destination: URL(string: "https://github.com/syvaidya/openstego/releases/tag/openstego-0.8.6")!)
+                }
             }
             if !revealing {
                 TextEditor(text: $message)
@@ -58,11 +93,29 @@ struct PNGMessageToolView: View {
             }
         }
         .task {
+            openStegoReady = OpenStegoBridge.installedJar != nil
             guard revealing else { return }
             let source = session.primary
             detectedMessage = await Task.detached(priority: .userInitiated) {
                 (try? PNGSteganography.containsZeroClickMessage(source)) ?? false
             }.value
+        }
+        .onChange(of: format) { _, _ in revealed = nil; errorMessage = nil }
+        .onDisappear { revealTask?.cancel() }
+    }
+
+    private func importOpenStego() {
+        let panel = NSOpenPanel()
+        panel.allowedContentTypes = [UTType(filenameExtension: "jar") ?? .data]
+        panel.canChooseDirectories = false
+        panel.allowsMultipleSelection = false
+        guard panel.runModal() == .OK, let source = panel.url else { return }
+        do {
+            try OpenStegoBridge.importJar(source)
+            openStegoReady = true
+            errorMessage = nil
+        } catch {
+            errorMessage = error.localizedDescription
         }
     }
 
@@ -71,6 +124,23 @@ struct PNGMessageToolView: View {
         if revealing {
             let enteredPassword = password
             password = ""
+            if format == .openStego {
+                let source = session.primary
+                isWorking = true
+                revealTask = Task {
+                    do {
+                        revealed = try await OpenStegoBridge.reveal(from: source, password: enteredPassword)
+                        errorMessage = nil
+                    } catch is CancellationError {
+                        revealed = nil
+                    } catch {
+                        revealed = nil
+                        errorMessage = error.localizedDescription
+                    }
+                    isWorking = false
+                }
+                return
+            }
             do {
                 revealed = try PNGSteganography.reveal(from: session.primary, password: enteredPassword)
                 errorMessage = nil
@@ -81,6 +151,7 @@ struct PNGMessageToolView: View {
             return
         }
         let source = session.primary
+        let selectedFormat = format
         let enteredPassword = password
         let enteredMessage = message
         let destination = session.outputURL(suffix: "hidden", ext: "png")
@@ -88,8 +159,14 @@ struct PNGMessageToolView: View {
         confirmation = ""
         message = ""
         session.run(title: "Hiding message", detail: source.lastPathComponent) { progress in
-            let result = try PNGSteganography.hide(enteredMessage, password: enteredPassword,
+            let result: URL
+            if selectedFormat == .openStego {
+                result = try await OpenStegoBridge.hide(enteredMessage, password: enteredPassword,
+                                                       in: source, to: destination)
+            } else {
+                result = try PNGSteganography.hide(enteredMessage, password: enteredPassword,
                                                    in: source, to: destination)
+            }
             progress(1)
             return [result]
         }
