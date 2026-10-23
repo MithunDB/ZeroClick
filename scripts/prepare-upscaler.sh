@@ -28,6 +28,7 @@ unzip -p "$model_zip" 'models/realesr-animevideov3-x4.param' > "$staged/models/r
 cp "$project_root"/third_party/upscaler/licenses/* "$staged/Notices/"
 chmod 755 "$staged/realesrgan-ncnn-vulkan"
 test "$(file -b "$staged/realesrgan-ncnn-vulkan")" != ''
+"$project_root/scripts/verify-upscaler-resources.sh" "$staged"
 if [[ -e "$destination" ]]; then rm -rf "$destination"; fi
 mv "$staged" "$destination"
 printf 'Prepared verified local upscaler resources at %s\n' "$destination"

@@ -52,10 +52,12 @@ enum FileAction: String, CaseIterable, Hashable {
 }
 
 enum ActionRegistry {
-    static func items(for mode: WheelMode, formats: [FileFormat], urls: [URL] = [], ffmpegAvailable: Bool? = nil) -> [RadialItem] {
+    static func items(for mode: WheelMode, formats: [FileFormat], urls: [URL] = [],
+                      ffmpegAvailable: Bool? = nil, bsdtarAvailable: Bool? = nil) -> [RadialItem] {
         switch mode {
         case .convert:
             let hasFFmpeg = ffmpegAvailable ?? FFmpeg.isAvailable
+            let hasBsdtar = bsdtarAvailable ?? LocalToolHealth.responds("/usr/bin/bsdtar", arguments: ["--version"])
             let completeSelection = urls.isEmpty || urls.count == formats.count
             let available = Set(completeSelection ? ConversionMatrix.targets(for: formats) : [])
             let categories = Set(formats.map(\.category))
@@ -67,8 +69,11 @@ enum ActionRegistry {
                 if !available.contains(target) {
                     return RadialItem(format: target, disabledReason: "Not for selection")
                 }
+                if formats.contains(.rar) && !hasBsdtar {
+                    return RadialItem(format: target, disabledReason: "Needs macOS bsdtar; restore the system archive tool")
+                }
                 if !hasFFmpeg && !nativeConversionPossible(from: formats, to: target) {
-                    return RadialItem(format: target, disabledReason: "Needs FFmpeg")
+                    return RadialItem(format: target, disabledReason: "Needs working FFmpeg; install it or set its path in Settings")
                 }
                 return RadialItem(format: target)
             }
@@ -84,7 +89,11 @@ enum ActionRegistry {
                 }
             }
             return candidates.map { tool in
-                RadialItem(tool: tool, disabledReason: available.contains(tool) ? nil : "Not for selection")
+                if tool == .upscaleImage && !UpscaleEngine.isAvailable {
+                    return RadialItem(tool: tool,
+                        disabledReason: "Upscaler unavailable; prepare verified resources and rebuild")
+                }
+                return RadialItem(tool: tool, disabledReason: available.contains(tool) ? nil : "Not for selection")
             }
         case .actions:
             let available = Set(availableActions(for: formats, urls: urls))
@@ -98,7 +107,9 @@ enum ActionRegistry {
 
     private static func availableTools(for formats: [FileFormat], urls: [URL]) -> [ToolID] {
             if urls.count > 1 && urls.count != formats.count { return [] }
-            if urls.count == 1, SecureFile.isEncrypted(urls[0]) {
+            if urls.count == 1,
+               SecureFile.isEncrypted(urls[0]) || NativeEncryptedArchive.isEncrypted(urls[0]) ||
+               (NativeDiskImage.isAvailable && NativeDiskImage.isEncrypted(urls[0])) {
                 return [.decryptFile]
             }
             if formats == [.zip], urls.count == 1,
@@ -109,7 +120,8 @@ enum ActionRegistry {
                PDFDocument(url: urls[0])?.isEncrypted == true {
                 return [.unlockPDF, .encryptFile]
             }
-            if formats.isEmpty, urls.count == 1, urls[0].pathExtension.lowercased() != "zclick" {
+            if formats.isEmpty, urls.count == 1,
+               !["zclick", "aea", "dmg"].contains(urls[0].pathExtension.lowercased()) {
                 var directory: ObjCBool = false
                 if FileManager.default.fileExists(atPath: urls[0].path, isDirectory: &directory), !directory.boolValue {
                     return [.encryptFile]
@@ -118,7 +130,7 @@ enum ActionRegistry {
             return ToolID.available(for: formats)
                 .filter { tool in
                     tool != .unlockPDF && tool != .unlockZIP && tool != .decryptFile &&
-                    (tool != .upscaleImage || (UpscaleEngine.executable != nil && !UpscaleModelCatalog.bundledModels.isEmpty))
+                    (tool != .upscaleImage || UpscaleEngine.isAvailable)
                 }
     }
 
@@ -130,8 +142,12 @@ enum ActionRegistry {
             if urls.count == 1,
                FileManager.default.fileExists(atPath: urls[0].path, isDirectory: &isDirectory),
                !isDirectory.boolValue {
-                if SecureFile.isEncrypted(urls[0]) { actions.append(.decrypt) }
-                else if urls[0].pathExtension.lowercased() != "zclick" { actions.append(.encrypt) }
+                if SecureFile.isEncrypted(urls[0]) || NativeEncryptedArchive.isEncrypted(urls[0]) ||
+                   (NativeDiskImage.isAvailable && NativeDiskImage.isEncrypted(urls[0])) {
+                    actions.append(.decrypt)
+                } else if !["zclick", "aea", "dmg"].contains(urls[0].pathExtension.lowercased()) {
+                    actions.append(.encrypt)
+                }
             }
             return actions
     }

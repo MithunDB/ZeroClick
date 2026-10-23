@@ -85,7 +85,7 @@ Native frameworks are used first: ImageIO/Core Graphics for images, AVFoundation
 
 | Scope | Tools |
 | --- | --- |
-| Any file | Compress (Balanced/Strong, target size, resize), Edit metadata (view, edit, strip sensitive or all fields), Encrypt to `.zclick`, Decrypt a ZeroClick file |
+| Any file | Compress (Balanced/Strong, target size, resize), Edit metadata (view, edit, strip sensitive or all fields), Encrypt to `.aea` or `.dmg`, Decrypt supported protected files including older `.zclick` files |
 | Images | Edit photos, Add a background, Crop, Redact, Resize, Rotate, Create a PDF, Make a collage, Upscale |
 | Video | Trim, Split, Crop, Change speed, Join, Save frames, Redact |
 | Audio | Trim, Normalize volume, Convert channels, Bleep, Create an audio visualizer |
@@ -93,7 +93,7 @@ Native frameworks are used first: ImageIO/Core Graphics for images, AVFoundation
 | ZIP | Unlock a password-protected archive into a new folder |
 | PNG | Hide a password-protected message in a copy, Reveal a hidden message |
 
-The Shift+Option Tools wheel and Command file-actions wheel can encrypt a selected file to a separate `.zclick` copy and decrypt ZeroClick-created files with the password. This local format uses PBKDF2-HMAC-SHA256 and AES-GCM; it is limited to 512 MB inputs and cannot open arbitrary protected file formats. Keep the password: there is no recovery service. PNG message hiding uses encrypted data in opaque pixel bits; editing, resizing, or re-saving the image may erase it. The Reveal window automatically checks for ZeroClick’s hidden-message signature before asking for a password; it does not detect every third-party steganography scheme. Neither feature uploads data.
+The Shift+Option Tools wheel and Command file-actions wheel can encrypt a selected regular file as an Apple Encrypted Archive (`.aea`) or AES-256 encrypted disk image (`.dmg`); the format is shown before saving. Both currently support one file up to 2 GB, use a password, and create a separate copy. ZeroClick decrypts its `.aea` files and opens `.dmg` images read-only, ejects them, then saves a new copy. A `.dmg` can also be opened in Finder with its password and ejected normally. `.aea` needs a password of at least 20 UTF-8 bytes; `.dmg` needs at least 12. Older `.zclick` files remain decryptable, but new `.zclick` creation is no longer offered. That legacy format uses PBKDF2-HMAC-SHA256 and AES-GCM and had a 512 MB input limit. These formats do not automatically unlock arbitrary password-protected files. Keep the password: there is no recovery service. Native-format Finder encrypt/decrypt round trips passed with disposable files and unchanged originals. PNG message hiding still uses encrypted data in opaque pixel bits; editing, resizing, or re-saving the image may erase it. The Reveal window checks for ZeroClick’s hidden-message signature but does not detect every third-party steganography scheme. None of these features uploads data.
 
 Image redaction can suggest face or text areas locally with Vision. Review and adjust the boxes before confirming export. Blur and Pixelate have per-area strength sliders from 1× to 8×; use Solid for sensitive text because blur and pixelation can leave details recoverable. Redacted output is a new copy without inherited EXIF/TIFF metadata.
 
@@ -105,15 +105,14 @@ Image redaction can suggest face or text areas locally with Vision. Review and a
 - [Brisk](https://github.com/plyght/brisk) and the Xcode command-line tools (`swiftc`) to build from source.
 - Optional: `ffmpeg` for the non-native media formats listed above (`wax install ffmpeg`). ZeroClick looks in `PATH`, `/opt/homebrew/bin` and `/usr/local/bin`; a custom path can be set in Settings.
 
-The upscaler engine and one illustration model are downloaded from their pinned upstream releases before a source build. The script verifies both download hashes and installs their notices. Personal model weights are never part of the checkout or build.
+The upscaler engine and one illustration model are downloaded from pinned upstream releases before a verified source build. The preparation script checks both SHA-256 hashes and installs their notices. Brisk 0.2.0 has no pre-build hook in this project, so use the wrapper below: it prepares missing verified resources, builds, tests, and, in `release` mode, checks the signed standalone app and clean ZIP. A missing or unverified model blocks a verified release. Personal model weights are never part of the checkout or build.
 
 ```bash
-scripts/prepare-upscaler.sh
-scripts/check.sh        # build and run the full test suite
+scripts/build-verified.sh check    # prepare resources, build, and test
+scripts/build-verified.sh release  # also archive and verify the clean ZIP
 brisk build            # debug .app in .build/debug/ZeroClick.app
 brisk run              # build and launch
 brisk test             # compile and run Tests/ with the app sources
-brisk archive --release
 ```
 
 ZeroClick needs **no Accessibility or Input Monitoring permission**. During a Finder drag it polls `NSEvent.pressedMouseButtons`, `NSEvent.modifierFlags`, `NSEvent.mouseLocation` and the system drag pasteboard (`NSPasteboard(name: .drag)`). The wheel appears only after Finder publishes a real drag; it reads files from that pasteboard or `NSDraggingInfo`. Moving more than 300 points from where the drag started cancels the wheel for that drag. It never installs key-event monitors or event taps. Progress shows in a floating card or a small pill under the notch (Settings > Appearance). Completion notifications are optional in Settings.
@@ -133,7 +132,7 @@ scripts/check.sh --fix  # apply swift-format fixes first
 
 ## Verification status
 
-The v0.2.0 build passes 73/73 checks and produces an ad-hoc signed standalone `.brisk/Archives/ZeroClick.app`. Finder drag tests have verified conversion, PDF Tools, file-actions, the disabled AI wheel, text redaction, PDF merge/split/organize/compression, ZIP extraction, protected PDF and ZIP unlocking, `.zclick` encryption/decryption, PNG message hiding/revealing, formatted Markdown PDF output, and the drag wheel after Finder relaunch. Upscaling's 2× preview and saved copy, two-image batch, per-image preview navigation, and cancellation have also passed Finder checks. Category-relevant disabled actions remain visible and cannot run. VoiceOver was not physically checked, and only one display was connected during testing.
+The current local implementation passes 82 automated tests and produces an ad-hoc signed standalone `.brisk/Archives/ZeroClick.app`. Finder drag tests verified conversion, PDF Tools, file-actions, the disabled AI wheel, text redaction, PDF merge/split/organize/compression, ZIP extraction, protected PDF and ZIP unlocking, legacy `.zclick` decryption, native `.aea` and `.dmg` encryption/decryption, PNG message hiding/revealing, formatted Markdown PDF output, and the drag wheel after Finder relaunch. Upscaling's 2× preview and saved copy, two-image batch, per-image preview navigation, and cancellation also passed Finder checks. Category-relevant disabled actions remain visible and cannot run. VoiceOver was not physically checked, and only one display was connected during testing.
 
 ## Project layout
 

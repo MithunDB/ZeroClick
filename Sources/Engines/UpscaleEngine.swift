@@ -21,6 +21,12 @@ enum UpscaleEngine {
         return candidate
     }
 
+    static var isAvailable: Bool {
+        guard let executable else { return false }
+        return LocalToolHealth.responds(executable.path, arguments: ["-h"], acceptableStatuses: [255]) &&
+            !UpscaleModelCatalog.bundledModels.isEmpty
+    }
+
     static func arguments(input: URL, output: URL, model: UpscaleModel, scale: Int, format: FileFormat) throws -> [String] {
         guard [2, 3, 4].contains(scale), [.png, .jpg, .webp].contains(format) else {
             throw SatsumaError.invalidInput("Choose 2×, 3×, or 4× and PNG, JPG, or WebP output.")

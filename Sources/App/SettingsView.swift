@@ -70,6 +70,16 @@ struct SettingsView: View {
         Section("General") {
             Toggle("Launch ZeroClick at login", isOn: $settings.launchAtLogin)
         }
+        Section("File encryption") {
+            Picker("Default format", selection: $settings.encryptionFormat) {
+                ForEach(EncryptionFormat.allCases) { format in
+                    Text(format.title).tag(format)
+                }
+            }
+            Text("Apple archives hold one file and can be opened with the macOS aa command. Legacy .zclick remains available while the new format is being verified in Finder.")
+                .font(.caption)
+                .foregroundStyle(.secondary)
+        }
         Section {
             LabeledContent("Conversion wheel") {
                 Label("Shift", systemImage: "shift").labelStyle(.titleAndIcon)

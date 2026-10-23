@@ -44,6 +44,9 @@ struct ArchiveEngine: ConversionEngine {
                 guard result.succeeded else { throw SatsumaError.toolFailed("gunzip", result.stderr) }
             }
         case .rar:
+            guard LocalToolHealth.responds("/usr/bin/bsdtar", arguments: ["--version"]) else {
+                throw SatsumaError.invalidInput("RAR extraction needs macOS bsdtar. Restore the system archive tool or choose a ZIP/TAR source.")
+            }
             // Repack in memory/disk without extracting archive entries. The
             // resulting TAR can be checked before any content reaches output.
             let repacked = FileManager.default.temporaryDirectory.appendingPathComponent("zeroclick-rar-preflight-\(UUID().uuidString).tar")

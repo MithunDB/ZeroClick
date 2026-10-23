@@ -15,7 +15,10 @@ enum FFmpeg {
         return Shell.which("ffprobe")
     }
 
-    static var isAvailable: Bool { path != nil }
+    static var isAvailable: Bool {
+        guard let path else { return false }
+        return LocalToolHealth.responds(path, arguments: ["-hide_banner", "-version"])
+    }
 
     enum Health: Equatable {
         case missing

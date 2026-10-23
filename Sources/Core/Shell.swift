@@ -32,6 +32,55 @@ final class ProcessBox: @unchecked Sendable {
 }
 
 enum Shell {
+    /// Supplies sensitive input through a pipe. The input is never included in argv or diagnostics.
+    /// Mounting callers must finish the command and detach its device even if their task is cancelled.
+    static func runWithInput(_ executable: String, _ arguments: [String], input: Data,
+                             cancelProcess: Bool = false) async throws -> ShellResult {
+        let box = ProcessBox()
+        return try await withTaskCancellationHandler {
+          try await withCheckedThrowingContinuation { continuation in
+            let process = box.process
+            process.executableURL = URL(fileURLWithPath: executable)
+            process.arguments = arguments
+            let inputPipe = Pipe()
+            let outputPipe = Pipe()
+            let errorPipe = Pipe()
+            process.standardInput = inputPipe
+            process.standardOutput = outputPipe
+            process.standardError = errorPipe
+            let buffer = PipeBuffer()
+            let group = DispatchGroup()
+            group.enter()
+            DispatchQueue.global().async {
+                buffer.set(stdout: outputPipe.fileHandleForReading.readDataToEndOfFile())
+                group.leave()
+            }
+            group.enter()
+            DispatchQueue.global().async {
+                buffer.set(stderr: errorPipe.fileHandleForReading.readDataToEndOfFile())
+                group.leave()
+            }
+            process.terminationHandler = { finished in
+                group.wait()
+                continuation.resume(returning: buffer.result(status: finished.terminationStatus))
+            }
+            do {
+                try process.run()
+                if cancelProcess && Task.isCancelled { box.terminate() }
+                DispatchQueue.global().async {
+                    try? inputPipe.fileHandleForWriting.write(contentsOf: input)
+                    try? inputPipe.fileHandleForWriting.close()
+                }
+            } catch {
+                try? inputPipe.fileHandleForWriting.close()
+                continuation.resume(throwing: error)
+            }
+          }
+        } onCancel: {
+            if cancelProcess { box.terminate() }
+        }
+    }
+
     static func runToFile(_ executable: String, _ arguments: [String], output url: URL) async throws -> ShellResult {
         let descriptor = Darwin.open(url.path, O_WRONLY | O_CREAT | O_EXCL, 0o600)
         guard descriptor >= 0 else { throw NSError(domain: NSPOSIXErrorDomain, code: Int(errno)) }

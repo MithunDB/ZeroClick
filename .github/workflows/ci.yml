@@ -1,0 +1,39 @@
+name: Verify ZeroClick
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  verify:
+    runs-on: macos-26
+    timeout-minutes: 90
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install pinned Brisk 0.2.0
+        run: |
+          curl --fail --location --silent --show-error --retry 3 \
+            https://github.com/plyght/brisk/releases/download/v0.2.0/brisk-macos-arm64 \
+            --output "$RUNNER_TEMP/brisk"
+          printf '%s  %s\n' \
+            '605071988781c395304df0474ef613d3a235b592efa0d6bada37ae6c4e02a09e' \
+            "$RUNNER_TEMP/brisk" | shasum -a 256 -c -
+          chmod 755 "$RUNNER_TEMP/brisk"
+          echo "$RUNNER_TEMP" >> "$GITHUB_PATH"
+      - name: Install optional FFmpeg used by media tests
+        run: brew install ffmpeg
+      - name: Record toolchain
+        run: |
+          sw_vers
+          xcodebuild -version
+          swiftc --version
+          brisk --version
+      - name: Prepare verified resources and run checks
+        run: scripts/build-verified.sh check
+      - name: Check source whitespace
+        run: git diff --check

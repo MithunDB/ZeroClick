@@ -87,6 +87,20 @@ enum ToolsWheelModifier: String, CaseIterable, Identifiable {
     var title: String { self == .command ? "Command" : "Shift + Option" }
 }
 
+enum EncryptionFormat: String, CaseIterable, Identifiable {
+    case appleArchive
+    case diskImage
+
+    var id: String { rawValue }
+
+    var title: String {
+        switch self {
+        case .appleArchive: return "Apple Encrypted Archive (.aea)"
+        case .diskImage: return "Encrypted Disk Image (.dmg)"
+        }
+    }
+}
+
 final class AppSettings: ObservableObject {
     static let shared = AppSettings()
 
@@ -127,6 +141,10 @@ final class AppSettings: ObservableObject {
         didSet { defaults.set(ffmpegPath, forKey: "ffmpegPath") }
     }
 
+    @Published var encryptionFormat: EncryptionFormat {
+        didSet { defaults.set(encryptionFormat.rawValue, forKey: "encryptionFormat") }
+    }
+
     @Published var launchAtLogin: Bool {
         didSet { applyLaunchAtLogin() }
     }
@@ -151,6 +169,7 @@ final class AppSettings: ObservableObject {
         toolsWheelModifier = ToolsWheelModifier(rawValue: defaults.string(forKey: "toolsWheelModifier") ?? "") ?? .shiftOption
         progressStyle = ProgressStyle(rawValue: defaults.string(forKey: "progressStyle") ?? "") ?? .card
         ffmpegPath = defaults.string(forKey: "ffmpegPath") ?? ""
+        encryptionFormat = EncryptionFormat(rawValue: defaults.string(forKey: "encryptionFormat") ?? "") ?? .appleArchive
         jpegQuality = defaults.object(forKey: "jpegQuality") as? Double ?? 0.9
         appearanceMode = AppearanceMode(rawValue: defaults.string(forKey: "appearanceMode") ?? "") ?? .system
         if #available(macOS 13.0, *) {

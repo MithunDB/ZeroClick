@@ -14,6 +14,18 @@ Outputs are new files, normally beside their sources. The explicit Move
 action relocates a file. No account, cloud service, telemetry, or AI
 backend is included.
 
+For local encryption, Shift+Option-drag one regular file and choose Encrypt.
+The format picker offers Apple Encrypted Archive (.aea) and encrypted disk image
+(.dmg). Older .zclick files can still be decrypted, but new .zclick creation
+is no longer offered. Keep the password:
+there is no recovery service. .aea and .dmg accept one file up to 2 GB;
+.zclick accepts up to 512 MB. Use 20 or more UTF-8 bytes for .aea and 12 or
+more for .dmg. Drag a supported encrypted file to Decrypt to make a new copy.
+ZeroClick opens .dmg read-only and ejects it before publishing that copy;
+you can also open the .dmg directly in Finder and eject it afterward. PNG
+hidden-message files and protected ZIP/PDF unlocking remain separate tools.
+Disposable Finder encrypt/decrypt round trips passed for both native formats.
+
 Upscale includes one fast, illustration-oriented Real-ESRGAN model. Optional
 personal models such as Upscayl Lite, UltraSharp, and Ultramix Balanced are
 not in this download and are not downloaded by the app. To use compatible

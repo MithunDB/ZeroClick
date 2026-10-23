@@ -1,0 +1,87 @@
+name: Package ZeroClick
+
+on:
+  workflow_dispatch:
+    inputs:
+      publish:
+        description: Publish an existing matching tag as a GitHub release
+        type: boolean
+        default: false
+      tag:
+        description: Existing tag to publish (required only when publishing)
+        type: string
+        required: false
+
+permissions:
+  contents: read
+
+jobs:
+  package:
+    if: ${{ github.repository == 'MithunDB/ZeroClick' }}
+    runs-on: macos-26
+    timeout-minutes: 90
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install pinned Brisk 0.2.0
+        run: |
+          curl --fail --location --silent --show-error --retry 3 \
+            https://github.com/plyght/brisk/releases/download/v0.2.0/brisk-macos-arm64 \
+            --output "$RUNNER_TEMP/brisk"
+          printf '%s  %s\n' \
+            '605071988781c395304df0474ef613d3a235b592efa0d6bada37ae6c4e02a09e' \
+            "$RUNNER_TEMP/brisk" | shasum -a 256 -c -
+          chmod 755 "$RUNNER_TEMP/brisk"
+          echo "$RUNNER_TEMP" >> "$GITHUB_PATH"
+      - name: Install FFmpeg
+        run: brew install ffmpeg
+      - name: Build and validate private package
+        run: scripts/build-verified.sh release
+      - name: Stage package
+        run: |
+          mkdir -p "$RUNNER_TEMP/zeroclick-release"
+          package="$(find .brisk/Archives -path '*/verified.*/ZeroClick-macOS-arm64.zip' -type f -print | sort | tail -1)"
+          test -n "$package"
+          cp "$package" "$RUNNER_TEMP/zeroclick-release/"
+          cd "$RUNNER_TEMP/zeroclick-release"
+          shasum -a 256 ZeroClick-macOS-arm64.zip > SHA256SUMS
+      - uses: actions/upload-artifact@v4
+        with:
+          name: ZeroClick-macOS-arm64
+          path: ${{ runner.temp }}/zeroclick-release/
+          if-no-files-found: error
+          retention-days: 30
+
+  publish:
+    if: ${{ inputs.publish && github.ref == 'refs/heads/main' }}
+    needs: package
+    runs-on: macos-26
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - name: Validate destination and tag
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RELEASE_TAG: ${{ inputs.tag }}
+        run: |
+          test "$GITHUB_REPOSITORY" = 'MithunDB/ZeroClick'
+          [[ "$RELEASE_TAG" =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]]
+          test "$RELEASE_TAG" = "v$(sed -n 's/^version = "\([^"]*\)"/\1/p' .brisk.toml)"
+          test "$(git rev-parse "refs/tags/$RELEASE_TAG^{commit}")" = "$GITHUB_SHA"
+          ! gh release view "$RELEASE_TAG" >/dev/null 2>&1
+      - uses: actions/download-artifact@v4
+        with:
+          name: ZeroClick-macOS-arm64
+          path: ${{ runner.temp }}/zeroclick-release
+      - name: Verify and publish existing tag
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RELEASE_TAG: ${{ inputs.tag }}
+        run: |
+          cd "$RUNNER_TEMP/zeroclick-release"
+          shasum -a 256 -c SHA256SUMS
+          gh release create "$RELEASE_TAG" ZeroClick-macOS-arm64.zip SHA256SUMS \
+            --verify-tag --title "ZeroClick $RELEASE_TAG" \
+            --notes "Private macOS arm64 build. Download the ZIP, extract ZeroClick.app, and open it on your Mac."

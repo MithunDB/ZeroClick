@@ -1,7 +1,9 @@
+import AppleArchive
 import AppKit
 import CoreImage
 import Foundation
 import PDFKit
+import System
 
 struct TestFailure: Error, CustomStringConvertible {
     let description: String
@@ -306,6 +308,31 @@ struct SatsumaTests {
             try expect(withFFmpeg.contains { $0.action == .convert(.mkv) }, "MKV should appear with FFmpeg")
         }
 
+        runner.test("broken local tools and absent bsdtar disable dependent conversions") {
+            try expect(!LocalToolHealth.responds("/usr/bin/false", arguments: []), "failed executable looked healthy")
+            try expect(!LocalToolHealth.responds("/missing/zeroclick-tool", arguments: []), "missing executable looked healthy")
+            let rar = ActionRegistry.items(for: .convert, formats: [.rar], bsdtarAvailable: false)
+            try expect(!rar.isEmpty && rar.allSatisfy { !$0.isEnabled } &&
+                       rar.contains { $0.disabledReason?.contains("bsdtar") == true },
+                "RAR conversion remained enabled without bsdtar")
+        }
+
+        runner.test("new encryption formats are native while legacy files remain decryptable") {
+            try expectEqual(Set(EncryptionFormat.allCases), Set([.appleArchive, .diskImage]))
+            let folder = FileManager.default.temporaryDirectory.appendingPathComponent("zeroclick-legacy-\(UUID().uuidString)")
+            try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
+            defer { try? FileManager.default.removeItem(at: folder) }
+            let source = folder.appendingPathComponent("old.txt")
+            let protected = folder.appendingPathComponent("old.txt.zclick")
+            try Data("legacy access".utf8).write(to: source)
+            _ = try SecureFile.encrypt(source, password: "legacy-test-password", to: protected)
+            try expect(ActionRegistry.items(for: .tools, formats: [], urls: [protected]).contains {
+                $0.action == .tool(.decryptFile) && $0.isEnabled
+            }, "legacy decrypt action disappeared")
+            let output = try SecureFile.decrypt(protected, password: "legacy-test-password", into: folder)
+            try expectEqual(try Data(contentsOf: output), Data("legacy access".utf8))
+        }
+
         runner.test("AI actions are visible and disabled") {
             let items = ActionRegistry.items(for: .ai, formats: [.png])
             try expectEqual(items.count, 6)
@@ -522,6 +549,256 @@ struct SatsumaTests {
                 throw TestFailure(description: "tampered file decrypted")
             } catch {}
             try expectEqual(try Data(contentsOf: source), original)
+        }
+
+        await runner.testAsync("native DMG round-trips one file and rejects a wrong password") {
+            let folder = FileManager.default.temporaryDirectory.appendingPathComponent("zeroclick-dmg-test-\(UUID().uuidString)")
+            try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
+            defer { try? FileManager.default.removeItem(at: folder) }
+            let source = folder.appendingPathComponent("notes.txt")
+            let archive = folder.appendingPathComponent("notes.txt.dmg")
+            let original = Data("private disk image test".utf8)
+            try original.write(to: source)
+            try Data("sibling".utf8).write(to: folder.appendingPathComponent("unrelated.txt"))
+            _ = try await NativeDiskImage.encrypt(source, password: "disposable-dmg-password", to: archive)
+            try expectEqual(try Data(contentsOf: source), original)
+            try expect(ActionRegistry.items(for: .tools, formats: [], urls: [archive]).contains {
+                $0.action == .tool(.decryptFile) && $0.isEnabled
+            }, "DMG decryption was not available")
+            let before = try FileManager.default.contentsOfDirectory(atPath: folder.path).sorted()
+            do {
+                _ = try await NativeDiskImage.decrypt(archive, password: "incorrect-password", into: folder)
+                throw TestFailure(description: "wrong DMG password created output")
+            } catch is TestFailure { throw TestFailure(description: "wrong DMG password created output") }
+            catch {}
+            try expectEqual(try FileManager.default.contentsOfDirectory(atPath: folder.path).sorted(), before,
+                "wrong DMG password left files")
+            let occupied = folder.appendingPathComponent("notes decrypted.txt")
+            try Data("occupied".utf8).write(to: occupied)
+            let output = try await NativeDiskImage.decrypt(archive, password: "disposable-dmg-password", into: folder)
+            try expectEqual(try Data(contentsOf: output), original)
+            try expect(output != source && output != occupied, "DMG extraction replaced an existing file")
+            try expectEqual(try Data(contentsOf: occupied), Data("occupied".utf8))
+            try expectEqual(try Data(contentsOf: source), original)
+            let cancelled = Task { try await NativeDiskImage.decrypt(
+                archive, password: "disposable-dmg-password", into: folder) }
+            cancelled.cancel()
+            do {
+                _ = try await cancelled.value
+                throw TestFailure(description: "cancelled DMG extraction published a file")
+            } catch is CancellationError {
+                // Attach completes so the device can be ejected, then cancellation propagates.
+            } catch is TestFailure { throw TestFailure(description: "cancelled DMG extraction published a file") }
+            try expectEqual(try FileManager.default.contentsOfDirectory(atPath: folder.path).sorted(),
+                (before + ["notes decrypted.txt", output.lastPathComponent]).sorted(),
+                "cancelled DMG extraction left files")
+        }
+
+        await runner.testAsync("native DMG rejects plain and multi-file images without publishing output") {
+            let folder = FileManager.default.temporaryDirectory.appendingPathComponent("zeroclick-dmg-reject-\(UUID().uuidString)")
+            let contents = folder.appendingPathComponent("contents")
+            try FileManager.default.createDirectory(at: contents, withIntermediateDirectories: true)
+            defer { try? FileManager.default.removeItem(at: folder) }
+            try Data("one".utf8).write(to: contents.appendingPathComponent("one.txt"))
+            try Data("two".utf8).write(to: contents.appendingPathComponent("two.txt"))
+            let plain = folder.appendingPathComponent("plain.dmg")
+            let createdPlain = try await Shell.run("/usr/sbin/diskutil",
+                ["image", "create", "from", "--format", "ULFO", contents.path, plain.path])
+            try expect(createdPlain.succeeded, "plain DMG fixture failed")
+            try expect(!NativeDiskImage.isEncrypted(plain), "plain DMG looked encrypted")
+            try expect(!ActionRegistry.items(for: .tools, formats: [], urls: [plain]).contains {
+                $0.action == .tool(.decryptFile) && $0.isEnabled
+            }, "plain DMG offered enabled decryption")
+            do {
+                _ = try await NativeDiskImage.decrypt(plain, password: "disposable-dmg-password", into: folder)
+                throw TestFailure(description: "plain DMG decrypted")
+            } catch is TestFailure { throw TestFailure(description: "plain DMG decrypted") }
+            catch {}
+            let protected = folder.appendingPathComponent("multiple.dmg")
+            let createdProtected = try await Shell.runWithInput("/usr/sbin/diskutil",
+                ["image", "create", "from", "--encrypt", "--stdinpassphrase", "--format", "ULFO",
+                 contents.path, protected.path], input: Data("disposable-dmg-password\n".utf8))
+            try expect(createdProtected.succeeded, "protected DMG fixture failed")
+            let before = try FileManager.default.contentsOfDirectory(atPath: folder.path).sorted()
+            do {
+                _ = try await NativeDiskImage.decrypt(protected, password: "disposable-dmg-password", into: folder)
+                throw TestFailure(description: "multi-file DMG decrypted")
+            } catch is TestFailure { throw TestFailure(description: "multi-file DMG decrypted") }
+            catch {}
+            try expectEqual(try FileManager.default.contentsOfDirectory(atPath: folder.path).sorted(), before,
+                "rejected DMG left output")
+        }
+
+        runner.test("native AEA round-trips one file without replacing sources or occupied outputs") {
+            let folder = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+            try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
+            defer { try? FileManager.default.removeItem(at: folder) }
+            let source = folder.appendingPathComponent("notes café.txt")
+            let original = Data("private local notes ☕️".utf8)
+            try original.write(to: source)
+            try Data("unrelated".utf8).write(to: folder.appendingPathComponent("other.txt"))
+            let archive = folder.appendingPathComponent("notes café.txt.aea")
+            _ = try NativeEncryptedArchive.encrypt(source, password: "disposable-password-42", to: archive)
+            try expectEqual(try Data(contentsOf: source), original)
+            try expect(FileManager.default.fileExists(atPath: archive.path), "AEA was not created")
+            try expect(NativeEncryptedArchive.isEncrypted(archive), "AEA header was not detected")
+            try expect(ActionRegistry.items(for: .tools, formats: [], urls: [archive]).contains {
+                $0.action == .tool(.decryptFile) && $0.isEnabled
+            }, "Tools wheel did not offer AEA decryption")
+            try expect(ActionRegistry.items(for: .actions, formats: [], urls: [archive]).contains {
+                $0.action == .fileAction(.decrypt) && $0.isEnabled
+            }, "File-actions wheel did not offer AEA decryption")
+            let occupied = folder.appendingPathComponent("notes café decrypted.txt")
+            try Data("occupied".utf8).write(to: occupied)
+            let output = try NativeEncryptedArchive.decrypt(archive, password: "disposable-password-42", into: folder)
+            try expectEqual(try Data(contentsOf: output), original)
+            try expectEqual(try Data(contentsOf: occupied), Data("occupied".utf8))
+            try expect(output != source && output != occupied, "decryption replaced a file")
+            try expectEqual(try Data(contentsOf: source), original)
+            try expect(!FileManager.default.fileExists(atPath: folder.appendingPathComponent("other decrypted.txt").path),
+                       "AEA included a sibling file")
+        }
+
+        await runner.testAsync("native AEA async encrypts a Finder-like folder with multiple siblings") {
+            let folder = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+            try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
+            defer { try? FileManager.default.removeItem(at: folder) }
+            for name in ["sample-image.png", "sample.md", "sample.txt", "sample.zip", "TESTING_GUIDE.txt"] {
+                try Data("disposable \(name)".utf8).write(to: folder.appendingPathComponent(name))
+            }
+            let source = folder.appendingPathComponent("sample.txt")
+            let archive = folder.appendingPathComponent("sample.txt.aea")
+            do {
+                _ = try await NativeEncryptedArchive.encryptAsync(source, password: "demo-archive-2026", to: archive)
+                throw TestFailure(description: "AppleArchive accepted a password shorter than 20 UTF-8 bytes")
+            } catch is TestFailure {
+                throw TestFailure(description: "AppleArchive accepted a password shorter than 20 UTF-8 bytes")
+            } catch {
+                try expect(!FileManager.default.fileExists(atPath: archive.path), "short password left output")
+            }
+            _ = try await NativeEncryptedArchive.encryptAsync(source, password: "demo-archive-2026-long", to: archive)
+            let output = try await NativeEncryptedArchive.decryptAsync(archive, password: "demo-archive-2026-long", into: folder)
+            try expectEqual(try Data(contentsOf: output), try Data(contentsOf: source))
+        }
+
+        runner.test("native AEA rejects wrong passwords and malformed input without outputs") {
+            let folder = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+            try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
+            defer { try? FileManager.default.removeItem(at: folder) }
+            let source = folder.appendingPathComponent("notes.txt")
+            try Data("secret".utf8).write(to: source)
+            let archive = folder.appendingPathComponent("notes.txt.aea")
+            _ = try NativeEncryptedArchive.encrypt(source, password: "disposable-password-42", to: archive)
+            for candidate in [archive, source] {
+                do {
+                    _ = try NativeEncryptedArchive.decrypt(candidate, password: "incorrect-password-42", into: folder)
+                    throw TestFailure(description: "invalid archive or password produced output")
+                } catch is TestFailure { throw TestFailure(description: "invalid archive or password produced output") }
+                catch {}
+            }
+            try expectEqual(try FileManager.default.contentsOfDirectory(atPath: folder.path).sorted(),
+                            ["notes.txt", "notes.txt.aea"], "failed extraction left files")
+        }
+
+        runner.test("native AEA rejects multiple entries and links without publishing files") {
+            let folder = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+            try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
+            defer { try? FileManager.default.removeItem(at: folder) }
+            let contents = folder.appendingPathComponent("contents")
+            let output = folder.appendingPathComponent("output")
+            try FileManager.default.createDirectory(at: contents, withIntermediateDirectories: false)
+            try FileManager.default.createDirectory(at: output, withIntermediateDirectories: false)
+            try Data("first".utf8).write(to: contents.appendingPathComponent("first.txt"))
+            try Data("second".utf8).write(to: contents.appendingPathComponent("second.txt"))
+            let archive = folder.appendingPathComponent("multiple.aea")
+            let context = ArchiveEncryptionContext(profile: .hkdf_sha256_aesctr_hmac__scrypt__none,
+                                                   compressionAlgorithm: .lzfse)
+            try context.setPassword("disposable-password-42")
+            guard let file = ArchiveByteStream.fileStream(path: FilePath(archive.path), mode: .writeOnly,
+                    options: [.create, .exclusiveCreate], permissions: FilePermissions(rawValue: 0o600)),
+                  let encrypted = ArchiveByteStream.encryptionStream(writingTo: file, encryptionContext: context),
+                  let encoder = ArchiveStream.encodeStream(writingTo: encrypted),
+                  let keys = ArchiveHeader.FieldKeySet("TYP,PAT,DAT,SIZ,MOD,MTM") else {
+                throw TestFailure(description: "Could not create multiple-entry fixture")
+            }
+            try encoder.writeDirectoryContents(archiveFrom: FilePath(contents.path), keySet: keys)
+            try encoder.close()
+            try encrypted.close()
+            try file.close()
+            do {
+                _ = try NativeEncryptedArchive.decrypt(archive, password: "disposable-password-42", into: output)
+                throw TestFailure(description: "multiple-entry archive extracted")
+            } catch is TestFailure { throw TestFailure(description: "multiple-entry archive extracted") }
+            catch {}
+            try expect(try FileManager.default.contentsOfDirectory(atPath: output.path).isEmpty,
+                       "rejected archive left extracted content")
+            try FileManager.default.removeItem(at: contents.appendingPathComponent("first.txt"))
+            try FileManager.default.removeItem(at: contents.appendingPathComponent("second.txt"))
+            try FileManager.default.createSymbolicLink(
+                at: contents.appendingPathComponent("unsafe-link"), withDestinationURL: folder)
+            let linkedArchive = folder.appendingPathComponent("link.aea")
+            let linkContext = ArchiveEncryptionContext(profile: .hkdf_sha256_aesctr_hmac__scrypt__none,
+                                                       compressionAlgorithm: .lzfse)
+            try linkContext.setPassword("disposable-password-42")
+            guard let linkFile = ArchiveByteStream.fileStream(path: FilePath(linkedArchive.path), mode: .writeOnly,
+                    options: [.create, .exclusiveCreate], permissions: FilePermissions(rawValue: 0o600)),
+                  let linkEncrypted = ArchiveByteStream.encryptionStream(writingTo: linkFile, encryptionContext: linkContext),
+                  let linkEncoder = ArchiveStream.encodeStream(writingTo: linkEncrypted),
+                  let linkKeys = ArchiveHeader.FieldKeySet("TYP,PAT,LNK,SIZ,MOD,MTM") else {
+                throw TestFailure(description: "Could not create linked-entry fixture")
+            }
+            try linkEncoder.writeDirectoryContents(archiveFrom: FilePath(contents.path), keySet: linkKeys)
+            try linkEncoder.close()
+            try linkEncrypted.close()
+            try linkFile.close()
+            do {
+                _ = try NativeEncryptedArchive.decrypt(linkedArchive, password: "disposable-password-42", into: output)
+                throw TestFailure(description: "linked-entry archive extracted")
+            } catch is TestFailure { throw TestFailure(description: "linked-entry archive extracted") }
+            catch {}
+            try expect(try FileManager.default.contentsOfDirectory(atPath: output.path).isEmpty,
+                       "rejected linked archive left content")
+        }
+
+        await runner.testAsync("native AEA cancellation removes a partial encrypted output") {
+            let folder = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+            try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
+            defer { try? FileManager.default.removeItem(at: folder) }
+            let source = folder.appendingPathComponent("large.bin")
+            var bytes = Data(count: 48 * 1024 * 1024)
+            bytes.withUnsafeMutableBytes { buffer in
+                if let base = buffer.baseAddress { arc4random_buf(base, buffer.count) }
+            }
+            try bytes.write(to: source)
+            bytes.removeAll()
+            let destination = folder.appendingPathComponent("large.bin.aea")
+            let task = Task { try await NativeEncryptedArchive.encryptAsync(
+                source, password: "disposable-password-42", to: destination) }
+            var stageSeen = false
+            for _ in 0..<1_000 {
+                let names = try FileManager.default.contentsOfDirectory(atPath: folder.path)
+                if names.contains(where: { $0.hasPrefix(".zeroclick-") && $0.hasSuffix(".aea") }) {
+                    stageSeen = true
+                    break
+                }
+                if FileManager.default.fileExists(atPath: destination.path) { break }
+                try await Task.sleep(nanoseconds: 2_000_000)
+            }
+            try expect(stageSeen, "large archive finished before cancellation could be tested")
+            task.cancel()
+            do {
+                _ = try await task.value
+                throw TestFailure(description: "cancelled AEA was published")
+            } catch is CancellationError {
+                // Expected.
+            } catch is TestFailure {
+                throw TestFailure(description: "cancelled AEA was published")
+            }
+            try expect(!FileManager.default.fileExists(atPath: destination.path), "cancelled AEA exists")
+            let names = try FileManager.default.contentsOfDirectory(atPath: folder.path)
+            try expectEqual(names.sorted(), ["large.bin"], "cancelled AEA left a staged file")
+            let size = (try FileManager.default.attributesOfItem(atPath: source.path)[.size] as? NSNumber)?.intValue
+            try expectEqual(size, 48 * 1024 * 1024, "cancelled AEA changed source size")
         }
 
         runner.test("PNG hides and reveals password-protected text without changing its source") {
