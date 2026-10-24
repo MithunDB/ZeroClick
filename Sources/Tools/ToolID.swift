@@ -17,6 +17,7 @@ enum ToolID: String, CaseIterable, Identifiable {
     case upscaleImage
     case rotateImage
     case createPDF
+    case makeSearchable
     case createCollage
     case trimVideo
     case cropVideo
@@ -54,6 +55,7 @@ enum ToolID: String, CaseIterable, Identifiable {
         case .upscaleImage: return "Upscale images"
         case .rotateImage: return "Rotate & flip"
         case .createPDF: return "Create a PDF"
+        case .makeSearchable: return "Make searchable"
         case .createCollage: return "Create a collage"
         case .trimVideo: return "Trim video"
         case .cropVideo: return "Crop video"
@@ -91,6 +93,7 @@ enum ToolID: String, CaseIterable, Identifiable {
         case .upscaleImage: return "Upscaling"
         case .rotateImage: return "Rotating"
         case .createPDF: return "Creating PDF"
+        case .makeSearchable: return "Making searchable"
         case .createCollage: return "Creating collage"
         case .trimVideo, .trimAudio: return "Trimming"
         case .changeVideoSpeed: return "Changing speed"
@@ -124,6 +127,7 @@ enum ToolID: String, CaseIterable, Identifiable {
         case .upscaleImage: return "UPSCALE"
         case .rotateImage: return "ROTATE"
         case .createPDF: return "PDF"
+        case .makeSearchable: return "SEARCH"
         case .createCollage: return "COLLAGE"
         case .trimVideo, .trimAudio: return "TRIM"
         case .changeVideoSpeed: return "SPEED"
@@ -158,6 +162,7 @@ enum ToolID: String, CaseIterable, Identifiable {
         case .upscaleImage: return "sparkles.rectangle.stack"
         case .rotateImage: return "rotate.right"
         case .createPDF: return "doc.richtext"
+        case .makeSearchable: return "doc.text.magnifyingglass"
         case .createCollage: return "square.grid.2x2"
         case .trimVideo, .trimAudio: return "scissors"
         case .changeVideoSpeed: return "gauge.with.dots.needle.67percent"
@@ -171,8 +176,8 @@ enum ToolID: String, CaseIterable, Identifiable {
         case .redactAudio: return "speaker.slash"
         case .mergePDF: return "doc.on.doc.fill"
         case .organizePDF: return "rectangle.stack"
-        case .unlockPDF: return "lock.open"
-        case .unlockZIP: return "lock.open"
+        case .unlockPDF: return "doc.badge.gearshape"
+        case .unlockZIP: return "archivebox.circle"
         case .hideMessage: return "text.below.photo.fill"
         case .revealMessage: return "text.viewfinder"
         case .encryptFile: return "lock.doc"
@@ -186,6 +191,8 @@ enum ToolID: String, CaseIterable, Identifiable {
             return [.image, .video, .audio, .document]
         case .editImage, .frameImage, .cropImage, .redactImage, .resizeImage, .upscaleImage, .rotateImage, .createPDF, .createCollage:
             return [.image]
+        case .makeSearchable:
+            return [.image, .document]
         case .trimVideo, .cropVideo, .changeVideoSpeed, .joinVideos, .videoSnapshots, .splitVideo, .redactVideo:
             return [.video]
         case .normalizeAudio, .audioToVideo, .trimAudio, .audioChannels, .redactAudio:
@@ -215,7 +222,7 @@ enum ToolID: String, CaseIterable, Identifiable {
         guard categories.count == 1, let category = categories.first, self.categories.contains(category) else { return false }
         if category == .document {
             switch self {
-            case .mergePDF, .organizePDF, .splitPDF, .unlockPDF, .editMetadata, .compress:
+            case .mergePDF, .organizePDF, .splitPDF, .unlockPDF, .editMetadata, .compress, .makeSearchable:
                 guard formats.allSatisfy({ $0 == .pdf }) else { return false }
             case .encryptFile:
                 break

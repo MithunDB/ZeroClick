@@ -160,6 +160,10 @@ final class AppSettings: ObservableObject {
         }
     }
 
+    @Published var wheelRadius: Double {
+        didSet { defaults.set(wheelRadius, forKey: "wheelRadius") }
+    }
+
     private init() {
         compressionPreset = CompressionPreset(rawValue: defaults.string(forKey: "compressionPreset") ?? "") ?? .balanced
         compressionResizeLongEdge = defaults.integer(forKey: "compressionResizeLongEdge")
@@ -172,6 +176,8 @@ final class AppSettings: ObservableObject {
         encryptionFormat = EncryptionFormat(rawValue: defaults.string(forKey: "encryptionFormat") ?? "") ?? .appleArchive
         jpegQuality = defaults.object(forKey: "jpegQuality") as? Double ?? 0.9
         appearanceMode = AppearanceMode(rawValue: defaults.string(forKey: "appearanceMode") ?? "") ?? .system
+        let savedWheelRadius = defaults.object(forKey: "wheelRadius") as? Double ?? 210
+        wheelRadius = min(260, max(150, savedWheelRadius))
         if #available(macOS 13.0, *) {
             launchAtLogin = SMAppService.mainApp.status == .enabled
         } else {

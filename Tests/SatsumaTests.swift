@@ -251,8 +251,8 @@ struct SatsumaTests {
             try expectEqual(ConversionMatrix.totalConversions, 190)
         }
 
-        runner.test("32 advanced tools") {
-            try expectEqual(ToolID.total, 32)
+        runner.test("33 advanced tools") {
+            try expectEqual(ToolID.total, 33)
         }
 
         runner.test("action registry filters conversion and tools") {
@@ -262,10 +262,67 @@ struct SatsumaTests {
             let pdf = ActionRegistry.items(for: .tools, formats: [.pdf, .pdf])
             try expect(pdf.contains { $0.action == .tool(.mergePDF) }, "PDF pair must offer merge")
             try expect(!pdf.contains { $0.action == .tool(.cropImage) }, "PDF should not show unrelated image tools")
-            try expect(pdf.contains { $0.action == .tool(.unlockPDF) && !$0.isEnabled }, "Plain PDF should show disabled Unlock PDF")
+            try expect(!pdf.contains { $0.action == .tool(.unlockPDF) }, "PDF unlocking belongs on File Actions")
+            try expect(ActionRegistry.items(for: .actions, formats: [.pdf]).contains { $0.action == .tool(.unlockPDF) && !$0.isEnabled }, "Plain PDF should show disabled Unlock PDF on File Actions")
             let imageTools = ActionRegistry.items(for: .tools, formats: [.png])
             try expect(imageTools.contains { $0.action == .tool(.upscaleImage) }, "PNG must show Upscale")
             try expect(!pdf.contains { $0.action == .tool(.upscaleImage) }, "PDF should not show image upscaling")
+        }
+
+        runner.test("quick wedges keep per-wheel successful history and grey inapplicable actions") {
+            let store = FileManager.default.temporaryDirectory.appendingPathComponent("quick-\(UUID().uuidString).json")
+            defer { try? FileManager.default.removeItem(at: store) }
+            let formats = ActionRegistry.items(for: .convert, formats: [.png])
+            let empty = QuickActionHistory.shortcuts(for: .convert, among: formats, from: store)
+            try expectEqual(empty.count, 3)
+            try expect(empty.allSatisfy { $0.1 == nil }, "new history should show disabled placeholders")
+            let noTargets = ActionRegistry.displayItems(for: .convert, formats: [], historyURL: store)
+            try expectEqual(noTargets.count, 3)
+            try expect(noTargets.allSatisfy { $0.quickSlot != nil && !$0.isEnabled },
+                       "a wheel with no conversion targets should retain three disabled quick wedges")
+            try QuickActionHistory.record(.convert(.png), in: .convert, outcome: .cancelled, to: store)
+            try QuickActionHistory.record(.convert(.png), in: .convert, outcome: .failed, to: store)
+            try expect(QuickActionHistory.shortcuts(for: .convert, among: formats, from: store).allSatisfy { $0.1 == nil },
+                       "failed or cancelled jobs polluted quick history")
+            try QuickActionHistory.recordSuccess(.convert(.jpg), in: .convert, to: store)
+            try QuickActionHistory.recordSuccess(.convert(.jpg), in: .convert, to: store)
+            try QuickActionHistory.recordSuccess(.convert(.webp), in: .convert, to: store)
+            try QuickActionHistory.recordSuccess(.fileAction(.copyPath), in: .actions, to: store)
+            let image = QuickActionHistory.shortcuts(for: .convert, among: formats, from: store)
+            try expectEqual(image[0].1?.action, .convert(.webp))
+            try expectEqual(image[1].1?.action, .convert(.jpg))
+            try expect(image[2].1 == nil, "third slot must not duplicate the last action")
+            let document = QuickActionHistory.shortcuts(for: .convert,
+                among: ActionRegistry.items(for: .convert, formats: [.pdf]), from: store)
+            try expect(document[0].1?.action == .convert(.webp) && document[0].1?.isEnabled == false,
+                       "last action should stay visible but grey for another category")
+            let fileActions = QuickActionHistory.shortcuts(for: .actions,
+                among: ActionRegistry.items(for: .actions, formats: [.png]), from: store)
+            try expectEqual(fileActions[0].1?.action, .fileAction(.copyPath))
+            try expect(fileActions[1].1 == nil, "conversion frequency leaked into File Actions")
+            try expect(QuickActionHistory.shortcuts(for: .ai, among: [], from: store).isEmpty,
+                       "disabled AI must have no quick actions")
+        }
+
+        runner.test("quick wedges occupy fixed left-side angles and remain hittable") {
+            let geometry = RadialGeometry(count: 9, quickCount: 3)
+            for index in 6..<9 {
+                let angle = geometry.angles(for: index)
+                let center = (angle.start + angle.end) / 2
+                try expect(cos(center) < -0.8, "quick wedge is not on the left")
+                let hit = geometry.index(at: CGPoint(x: cos(center) * 100, y: sin(center) * 100))
+                try expectEqual(hit, index)
+            }
+            let regular = geometry.angles(for: 0)
+            try expectEqual(geometry.index(at: CGPoint(x: cos((regular.start + regular.end) / 2) * 100,
+                                                      y: sin((regular.start + regular.end) / 2) * 100)), 0)
+            let dense = RadialGeometry(innerRadius: 82, outerRadius: 210, count: 15, quickCount: 3)
+            try expect(dense.labelWidth(for: 0) > 50, "dense Command wheel needs readable wedge width")
+            for index in 0..<15 {
+                let angles = dense.angles(for: index)
+                let middle = (angles.start + angles.end) / 2
+                try expectEqual(dense.index(at: CGPoint(x: cos(middle) * 150, y: sin(middle) * 150)), index)
+            }
         }
 
         runner.test("mixed selections expose only common actions") {
@@ -277,7 +334,7 @@ struct SatsumaTests {
             let paths = [URL(fileURLWithPath: "/tmp/photo.png"), URL(fileURLWithPath: "/tmp/song.mp3")]
             let actions = ActionRegistry.items(for: .actions, formats: [.png, .mp3], urls: paths)
             try expect(actions.contains { $0.action == .fileAction(.createZip) }, "mixed files can be archived together")
-            try expect(actions.contains { $0.action == .fileAction(.extractZip) && !$0.isEnabled }, "mixed files cannot be extracted as one ZIP")
+            try expect(!actions.contains { $0.action == .fileAction(.extractZip) }, "mixed nonarchives should not crowd File Actions with ZIP extraction")
         }
 
         runner.test("partly unsupported selections cannot enable conversion or tools") {
@@ -326,7 +383,7 @@ struct SatsumaTests {
             let protected = folder.appendingPathComponent("old.txt.zclick")
             try Data("legacy access".utf8).write(to: source)
             _ = try SecureFile.encrypt(source, password: "legacy-test-password", to: protected)
-            try expect(ActionRegistry.items(for: .tools, formats: [], urls: [protected]).contains {
+            try expect(ActionRegistry.items(for: .actions, formats: [], urls: [protected]).contains {
                 $0.action == .tool(.decryptFile) && $0.isEnabled
             }, "legacy decrypt action disappeared")
             let output = try SecureFile.decrypt(protected, password: "legacy-test-password", into: folder)
@@ -364,10 +421,10 @@ struct SatsumaTests {
 
         runner.test("file actions apply to folders and unsupported types") {
             let items = ActionRegistry.items(for: .actions, formats: [])
-            try expectEqual(items.count, 10)
+            try expectEqual(items.count, 9)
             try expect(items.contains { $0.action == .fileAction(.copyPath) && $0.isEnabled }, "Copy Path must be available")
             try expect(items.contains { $0.action == .fileAction(.duplicate) && $0.isEnabled }, "Duplicate must be available")
-            try expect(items.contains { $0.action == .fileAction(.extractZip) && !$0.isEnabled }, "Extract ZIP must be visible but unavailable")
+            try expect(!items.contains { $0.action == .fileAction(.extractZip) }, "Extract ZIP is only shown for archives")
         }
 
         await runner.testAsync("ZIP action creates and extracts without replacing source") {
@@ -468,7 +525,7 @@ struct SatsumaTests {
             try expect(result.succeeded, "protected ZIP fixture creation")
             let original = try Data(contentsOf: zip)
             try expect(try ZipSafety.validate(zip).isEncrypted, "ZIP encryption flag must be detected")
-            try expect(ActionRegistry.items(for: .tools, formats: [.zip], urls: [zip]).contains { $0.action == .tool(.unlockZIP) }, "protected ZIP must offer unlock")
+            try expect(ActionRegistry.items(for: .actions, formats: [.zip], urls: [zip]).contains { $0.action == .tool(.unlockZIP) }, "protected ZIP must offer unlock")
             let wrong = folder.appendingPathComponent("wrong output")
             do {
                 _ = try await ArchiveActionRunner.extractProtectedZip(zip, password: "wrong", to: wrong)
@@ -525,9 +582,9 @@ struct SatsumaTests {
             let encrypted = folder.appendingPathComponent("notes.txt.zclick")
             _ = try SecureFile.encrypt(source, password: "test-secret-42", to: encrypted)
             try expect(SecureFile.isEncrypted(encrypted), "encrypted header must be detected")
-            try expect(ActionRegistry.items(for: .actions, formats: [], urls: [encrypted]).contains { $0.action == .fileAction(.decrypt) }, "encrypted file must offer decrypt")
-            try expect(ActionRegistry.items(for: .tools, formats: [], urls: [encrypted]).contains { $0.action == .tool(.decryptFile) }, "Tools wheel must offer decrypt")
-            try expect(ActionRegistry.items(for: .tools, formats: [.txt], urls: [source]).contains { $0.action == .tool(.encryptFile) }, "Tools wheel must offer encrypt")
+            try expect(ActionRegistry.items(for: .actions, formats: [], urls: [encrypted]).contains { $0.action == .tool(.decryptFile) }, "encrypted file must offer decrypt")
+            try expect(!ActionRegistry.items(for: .tools, formats: [], urls: [encrypted]).contains { $0.action == .tool(.decryptFile) }, "Tools wheel must not duplicate decrypt")
+            try expect(ActionRegistry.items(for: .actions, formats: [.txt], urls: [source]).contains { $0.action == .tool(.encryptFile) }, "File Actions must offer encrypt")
             try expectEqual(try Data(contentsOf: source), original)
             do {
                 _ = try SecureFile.decrypt(encrypted, password: "wrong", into: folder)
@@ -562,7 +619,7 @@ struct SatsumaTests {
             try Data("sibling".utf8).write(to: folder.appendingPathComponent("unrelated.txt"))
             _ = try await NativeDiskImage.encrypt(source, password: "disposable-dmg-password", to: archive)
             try expectEqual(try Data(contentsOf: source), original)
-            try expect(ActionRegistry.items(for: .tools, formats: [], urls: [archive]).contains {
+            try expect(ActionRegistry.items(for: .actions, formats: [], urls: [archive]).contains {
                 $0.action == .tool(.decryptFile) && $0.isEnabled
             }, "DMG decryption was not available")
             let before = try FileManager.default.contentsOfDirectory(atPath: folder.path).sorted()
@@ -606,7 +663,7 @@ struct SatsumaTests {
                 ["image", "create", "from", "--format", "ULFO", contents.path, plain.path])
             try expect(createdPlain.succeeded, "plain DMG fixture failed")
             try expect(!NativeDiskImage.isEncrypted(plain), "plain DMG looked encrypted")
-            try expect(!ActionRegistry.items(for: .tools, formats: [], urls: [plain]).contains {
+            try expect(!ActionRegistry.items(for: .actions, formats: [], urls: [plain]).contains {
                 $0.action == .tool(.decryptFile) && $0.isEnabled
             }, "plain DMG offered enabled decryption")
             do {
@@ -647,11 +704,8 @@ struct SatsumaTests {
             try expectEqual(try Data(contentsOf: source), original)
             try expect(FileManager.default.fileExists(atPath: archive.path), "AEA was not created")
             try expect(NativeEncryptedArchive.isEncrypted(archive), "AEA header was not detected")
-            try expect(ActionRegistry.items(for: .tools, formats: [], urls: [archive]).contains {
-                $0.action == .tool(.decryptFile) && $0.isEnabled
-            }, "Tools wheel did not offer AEA decryption")
             try expect(ActionRegistry.items(for: .actions, formats: [], urls: [archive]).contains {
-                $0.action == .fileAction(.decrypt) && $0.isEnabled
+                $0.action == .tool(.decryptFile) && $0.isEnabled
             }, "File-actions wheel did not offer AEA decryption")
             let occupied = folder.appendingPathComponent("notes café decrypted.txt")
             try Data("occupied".utf8).write(to: occupied)
@@ -1361,6 +1415,257 @@ struct SatsumaTests {
                        "Suggested text area escaped the image")
         }
 
+        runner.test("OCR copy is temporary and image export adds a searchable PDF text layer") {
+            let folder = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+            try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
+            defer { try? FileManager.default.removeItem(at: folder) }
+            let source = folder.appendingPathComponent("scan.png")
+            let destination = folder.appendingPathComponent("scan searchable.pdf")
+            let image = NSImage(size: CGSize(width: 900, height: 220))
+            image.lockFocus()
+            NSColor.white.setFill()
+            NSRect(x: 0, y: 0, width: 900, height: 220).fill()
+            ("SEARCHABLE PAPER SAMPLE" as NSString).draw(at: CGPoint(x: 20, y: 65),
+                withAttributes: [.font: NSFont.boldSystemFont(ofSize: 64), .foregroundColor: NSColor.black])
+            image.unlockFocus()
+            guard let cg = image.cgImage(forProposedRect: nil, context: nil, hints: nil),
+                  let png = NSBitmapImageRep(cgImage: cg).representation(using: .png, properties: [:]) else {
+                throw TestFailure(description: "Could not create scanned-image fixture")
+            }
+            try png.write(to: source)
+            let original = try Data(contentsOf: source)
+            let text = try SearchablePDF.extractText(from: source)
+            try expect(text.contains("SEARCHABLE"), "Vision did not recognize the scanned image")
+            let visualScan = try SearchablePDF.scanPages(from: source)
+            try expectEqual(visualScan.count, 1)
+            try expect(visualScan[0].lines.contains { $0.text.contains("SEARCHABLE") }, "Selectable overlay lost OCR lines")
+            try expect(visualScan[0].lines.allSatisfy { CGRect(x: 0, y: 0, width: 1, height: 1).contains($0.normalizedBox) },
+                       "Selectable OCR text escaped image bounds")
+            try expect(visualScan[0].lines.allSatisfy { (0...1).contains($0.confidence) },
+                       "OCR confidence was outside Vision's expected range")
+            let uncertain = SearchablePDF.ScannedPage(number: 1, text: "unclear", lines: [
+                .init(text: "unclear", normalizedBox: CGRect(x: 0, y: 0, width: 1, height: 1), confidence: 0.59),
+                .init(text: "clear", normalizedBox: CGRect(x: 0, y: 0, width: 1, height: 1), confidence: 0.6)
+            ])
+            try expectEqual(uncertain.uncertainLineCount, 1)
+            let display = try SearchablePDF.displayImage(from: source, pageIndex: 0)
+            try expect(display.size.width > display.size.height, "Wide image preview lost its aspect ratio")
+            let canvas = OCRImageCanvas(frame: NSRect(x: 0, y: 0, width: 900, height: 300))
+            canvas.configure(image: display, lines: visualScan[0].lines, query: "SEARCHABLE")
+            canvas.layoutSubtreeIfNeeded()
+            let characters = canvas.selectableCharacters
+            guard let wordIndex = characters.indices.first(where: { index in
+                Array(characters[index...].prefix(10)).joined() == "SEARCHABLE"
+            }), let fittedFrame = canvas.tokenFrame(at: wordIndex) else {
+                throw TestFailure(description: "OCR preview has no bounded SEARCHABLE letters")
+            }
+            let selectionWindow = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 900, height: 300),
+                                           styleMask: .borderless, backing: .buffered, defer: false)
+            selectionWindow.contentView = canvas
+            selectionWindow.setFrameOrigin(NSPoint(x: -10_000, y: -10_000))
+            selectionWindow.orderFrontRegardless()
+            defer { selectionWindow.orderOut(nil) }
+            canvas.frame = selectionWindow.contentView!.bounds
+            canvas.layoutSubtreeIfNeeded()
+            guard let wordFrame = canvas.tokenFrame(at: wordIndex),
+                  let click = NSEvent.mouseEvent(with: .leftMouseDown,
+                      location: canvas.convert(CGPoint(x: wordFrame.midX, y: wordFrame.midY), to: nil),
+                      modifierFlags: [], timestamp: 0, windowNumber: selectionWindow.windowNumber,
+                      context: nil, eventNumber: 1, clickCount: 1, pressure: 1) else {
+                throw TestFailure(description: "Could not synthesize a word-selection click")
+            }
+            selectionWindow.sendEvent(click)
+            try expectEqual(canvas.selectedText, "S")
+            if let lastIndex = characters.indices.last(where: { index in
+                index >= 5 && Array(characters[(index - 5)...index]).joined() == "SAMPLE"
+            }) {
+                guard let lastFrame = canvas.tokenFrame(at: lastIndex),
+                      let drag = NSEvent.mouseEvent(with: .leftMouseDragged,
+                          location: canvas.convert(CGPoint(x: lastFrame.midX, y: lastFrame.midY), to: nil),
+                          modifierFlags: [], timestamp: 0.1, windowNumber: selectionWindow.windowNumber,
+                          context: nil, eventNumber: 2, clickCount: 1, pressure: 1) else {
+                    throw TestFailure(description: "Could not synthesize a multi-word selection drag")
+                }
+                selectionWindow.sendEvent(drag)
+                try expectEqual(canvas.selectedText, "SEARCHABLE PAPER SAMPLE")
+                canvas.selectToken(at: wordIndex)
+            }
+            canvas.selectToken(at: wordIndex + 2)
+            canvas.selectThroughToken(at: wordIndex + 5)
+            try expectEqual(canvas.selectedText, "ARCH", "partial OCR selection must copy only highlighted letters")
+            canvas.selectToken(at: wordIndex)
+            canvas.frame = NSRect(x: 0, y: 0, width: 1800, height: 600)
+            canvas.needsLayout = true
+            canvas.layoutSubtreeIfNeeded()
+            try expect((canvas.tokenFrame(at: wordIndex)?.width ?? 0) > fittedFrame.width * 1.8,
+                       "zooming the OCR canvas did not enlarge selectable text regions")
+            try expectEqual(canvas.selectedText, "S")
+            let zoomView = OCRMagnifyingScrollView(frame: NSRect(x: 0, y: 0, width: 300, height: 200))
+            zoomView.allowsMagnification = true
+            zoomView.minMagnification = 1
+            zoomView.maxMagnification = 4
+            zoomView.documentView = OCRImageCanvas(frame: NSRect(x: 0, y: 0, width: 300, height: 200))
+            zoomView.sizeDocumentToViewport()
+            zoomView.setMagnification(2, centeredAt: NSPoint(x: 150, y: 100))
+            let centered = zoomView.contentView.documentVisibleRect
+            try expect(abs(centered.midX - 150) < 4 && abs(centered.midY - 100) < 4,
+                       "OCR zoom did not retain its chosen center")
+            try expect(!FileManager.default.fileExists(atPath: destination.path), "copy-only scan wrote a PDF")
+            let published = try OutputWriter.write(to: destination) { staged in
+                try SearchablePDF.create(from: source, to: staged)
+            }
+            guard let pdf = PDFDocument(url: published) else { throw TestFailure(description: "Could not reopen OCR PDF") }
+            try expectEqual(pdf.pageCount, 1)
+            try expect(pdf.string?.contains("SEARCHABLE") == true, "PDF text layer is not searchable")
+            let expectedPageSize = CGSize(width: CGFloat(cg.width) / 2, height: CGFloat(cg.height) / 2)
+            try expectEqual(pdf.page(at: 0)?.bounds(for: .mediaBox).size, expectedPageSize)
+            guard let rendered = pdf.page(at: 0)?.thumbnail(of: CGSize(width: 900, height: 220), for: .mediaBox),
+                  let renderedCG = rendered.cgImage(forProposedRect: nil, context: nil, hints: nil) else {
+                throw TestFailure(description: "Could not render searchable PDF")
+            }
+            let pixels = NSBitmapImageRep(cgImage: renderedCG)
+            let rightStart = Int(Double(pixels.pixelsWide) * 0.70)
+            let rightEnd = Int(Double(pixels.pixelsWide) * 0.95)
+            let visibleRightText = (rightStart..<rightEnd).contains { x in
+                (0..<pixels.pixelsHigh).contains { y in
+                    guard let color = pixels.colorAt(x: x, y: y)?.usingColorSpace(.deviceRGB) else { return false }
+                    return color.redComponent < 0.35 && color.greenComponent < 0.35 && color.blueComponent < 0.35
+                }
+            }
+            try expect(visibleRightText, "The right side of the scanned image was cropped from the PDF")
+            try expectEqual(try Data(contentsOf: source), original, "OCR changed the image source")
+            let nextName = ConversionMatrix.uniqueURL(directory: folder, baseName: "scan", suffix: "searchable", ext: "pdf")
+            try expectEqual(nextName.lastPathComponent, "scan searchable 2.pdf")
+
+            let scanned = PDFDocument()
+            guard let picture = NSImage(contentsOf: source), let scannedPage = PDFPage(image: picture) else {
+                throw TestFailure(description: "Could not create image-only PDF fixture")
+            }
+            scanned.insert(scannedPage, at: 0)
+            let scannedURL = folder.appendingPathComponent("image-only.pdf")
+            let scannedOutput = folder.appendingPathComponent("image-only searchable.pdf")
+            try expect(scanned.write(to: scannedURL), "Could not write image-only PDF fixture")
+            try expect((PDFDocument(url: scannedURL)?.string ?? "").isEmpty, "Fixture was already searchable")
+            let scannedBytes = try Data(contentsOf: scannedURL)
+            try SearchablePDF.create(from: scannedURL, to: scannedOutput)
+            try expect(PDFDocument(url: scannedOutput)?.string?.contains("SEARCHABLE") == true,
+                       "image-only PDF did not gain searchable text")
+            try expectEqual(PDFDocument(url: scannedOutput)?.page(at: 0)?.bounds(for: .mediaBox).size,
+                            PDFDocument(url: scannedURL)?.page(at: 0)?.bounds(for: .mediaBox).size)
+            try expectEqual(try Data(contentsOf: scannedURL), scannedBytes, "image-only PDF source changed")
+
+            let tallImage = NSImage(size: CGSize(width: 300, height: 500))
+            tallImage.lockFocus()
+            NSColor.white.setFill()
+            NSRect(x: 0, y: 0, width: 300, height: 500).fill()
+            tallImage.unlockFocus()
+            guard let firstPage = PDFPage(image: picture), let tallPage = PDFPage(image: tallImage) else {
+                throw TestFailure(description: "Could not create mixed-size PDF pages")
+            }
+            let mixed = PDFDocument()
+            mixed.insert(firstPage, at: 0)
+            mixed.insert(tallPage, at: 1)
+            let mixedSource = folder.appendingPathComponent("mixed-pages.pdf")
+            let mixedOutput = folder.appendingPathComponent("mixed-pages searchable.pdf")
+            try expect(mixed.write(to: mixedSource), "Could not write mixed-size PDF fixture")
+            try SearchablePDF.create(from: mixedSource, to: mixedOutput)
+            let rebuilt = PDFDocument(url: mixedOutput)
+            try expectEqual(rebuilt?.pageCount, 2)
+            for index in 0..<2 {
+                try expectEqual(rebuilt?.page(at: index)?.bounds(for: .mediaBox).size,
+                                mixed.page(at: index)?.bounds(for: .mediaBox).size,
+                                "Searchable export changed page \(index + 1) dimensions")
+            }
+        }
+
+        await runner.testAsync("cancelled searchable-PDF export leaves no output") {
+            let folder = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+            try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
+            defer { try? FileManager.default.removeItem(at: folder) }
+            let source = folder.appendingPathComponent("source.pdf")
+            let destination = folder.appendingPathComponent("source searchable.pdf")
+            try TextRenderer.writePDF("CANCELLATION SAMPLE", to: source)
+            let task = Task {
+                withUnsafeCurrentTask { $0?.cancel() }
+                return try OutputWriter.write(to: destination) { staged in
+                    try SearchablePDF.create(from: source, to: staged)
+                }
+            }
+            do {
+                _ = try await task.value
+                throw TestFailure(description: "cancelled OCR export succeeded")
+            } catch is TestFailure { throw TestFailure(description: "cancelled OCR export succeeded") }
+            catch {}
+            try expect(!FileManager.default.fileExists(atPath: destination.path), "cancelled OCR export published output")
+        }
+
+        runner.test("searchable PDF keeps native text and rejects annotated pages") {
+            let folder = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+            try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
+            defer { try? FileManager.default.removeItem(at: folder) }
+            let source = folder.appendingPathComponent("source.pdf")
+            let output = folder.appendingPathComponent("source searchable.pdf")
+            try TextRenderer.writePDF("EXISTING SEARCHABLE TEXT", to: source)
+            let original = try Data(contentsOf: source)
+            let nativeScan = try SearchablePDF.scanPages(from: source)
+            try expect(nativeScan.first?.text.contains("EXISTING SEARCHABLE TEXT") == true,
+                       "Native PDF text was not available in the scan")
+            try expect(nativeScan.first?.lines.contains { $0.text.contains("SEARCHABLE") } == true,
+                       "Native PDF text was not selectable over its page preview")
+            try expect(nativeScan.first?.lines.flatMap(\.words).contains { $0.text == "SEARCHABLE" } == true,
+                       "Native PDF text did not expose word-sized selection boxes")
+            let nativeCanvas = OCRImageCanvas(frame: NSRect(x: 0, y: 0, width: 900, height: 700))
+            nativeCanvas.configure(image: try SearchablePDF.displayImage(from: source, pageIndex: 0),
+                                   lines: nativeScan[0].lines, query: "")
+            nativeCanvas.layoutSubtreeIfNeeded()
+            let nativeCharacters = nativeCanvas.selectableCharacters
+            guard let nativeWordIndex = nativeCharacters.indices.first(where: { index in
+                Array(nativeCharacters[index...].prefix(10)).joined() == "SEARCHABLE"
+            }) else {
+                throw TestFailure(description: "Native PDF letters were not selectable in the preview")
+            }
+            nativeCanvas.selectToken(at: nativeWordIndex)
+            nativeCanvas.selectThroughToken(at: nativeWordIndex + 9)
+            try expectEqual(nativeCanvas.selectedText, "SEARCHABLE")
+            nativeCanvas.selectToken(at: nativeWordIndex + 2)
+            nativeCanvas.selectThroughToken(at: nativeWordIndex + 5)
+            try expectEqual(nativeCanvas.selectedText, "ARCH")
+            try SearchablePDF.create(from: source, to: output)
+            let result = PDFDocument(url: output)
+            try expectEqual(result?.pageCount, 1)
+            try expect(result?.string?.contains("EXISTING SEARCHABLE TEXT") == true,
+                       "existing selectable text was lost")
+            try expectEqual(try Data(contentsOf: source), original, "PDF source changed")
+            guard let document = PDFDocument(url: source), let page = document.page(at: 0) else {
+                throw TestFailure(description: "Could not reopen annotated fixture")
+            }
+            page.addAnnotation(PDFAnnotation(bounds: CGRect(x: 10, y: 10, width: 40, height: 20), forType: .freeText, withProperties: nil))
+            try expect(document.write(to: source), "Could not save annotated fixture")
+            let unsafeOutput = folder.appendingPathComponent("annotated searchable.pdf")
+            do {
+                _ = try OutputWriter.write(to: unsafeOutput) { staged in
+                    try SearchablePDF.create(from: source, to: staged)
+                }
+                throw TestFailure(description: "annotated PDF was silently flattened")
+            } catch is TestFailure { throw TestFailure(description: "annotated PDF was silently flattened") }
+            catch {}
+            try expect(!FileManager.default.fileExists(atPath: unsafeOutput.path), "annotated PDF left an output")
+            let locked = folder.appendingPathComponent("locked.pdf")
+            guard let plain = PDFDocument(url: output) else { throw TestFailure(description: "Could not create protected fixture") }
+            try expect(plain.write(to: locked, withOptions: [.userPasswordOption: "ocr-test-password",
+                                                      .ownerPasswordOption: "ocr-owner-password"]),
+                       "Could not write protected fixture")
+            let lockedOutput = folder.appendingPathComponent("locked searchable.pdf")
+            do {
+                _ = try OutputWriter.write(to: lockedOutput) { staged in
+                    try SearchablePDF.create(from: locked, to: staged)
+                }
+                throw TestFailure(description: "protected PDF was processed")
+            } catch is TestFailure { throw TestFailure(description: "protected PDF was processed") }
+            catch {}
+            try expect(!FileManager.default.fileExists(atPath: lockedOutput.path), "protected PDF left an output")
+        }
+
         runner.test("multiple images create readable PDF pages without changing inputs") {
             let folder = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
             try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
@@ -1682,11 +1987,11 @@ struct SatsumaTests {
             let originalBytes = try Data(contentsOf: locked)
             guard let lockedDocument = PDFDocument(url: locked) else { throw TestFailure(description: "Could not reopen locked fixture") }
             try expect(lockedDocument.isEncrypted && lockedDocument.isLocked, "Fixture must require a password")
-            let wheel = ActionRegistry.items(for: .tools, formats: [.pdf], urls: [locked])
+            let wheel = ActionRegistry.items(for: .actions, formats: [.pdf], urls: [locked])
             try expect(wheel.contains { $0.action == .tool(.unlockPDF) && $0.isEnabled }, "Protected PDF should enable Unlock")
             try expect(wheel.contains { $0.action == .tool(.encryptFile) && $0.isEnabled }, "Protected PDF should enable Encrypt")
-            try expect(wheel.contains { $0.action == .tool(.splitPDF) && !$0.isEnabled }, "Other PDF tools should remain visible but disabled for a protected PDF")
-            let normalWheel = ActionRegistry.items(for: .tools, formats: [.pdf], urls: [plain])
+            try expect(ActionRegistry.items(for: .tools, formats: [.pdf], urls: [locked]).contains { $0.action == .tool(.splitPDF) && !$0.isEnabled }, "Other PDF tools should remain visible but disabled for a protected PDF")
+            let normalWheel = ActionRegistry.items(for: .actions, formats: [.pdf], urls: [plain])
             try expect(normalWheel.contains { $0.action == .tool(.unlockPDF) && !$0.isEnabled }, "Normal PDF must disable Unlock")
             do {
                 _ = try OutputWriter.write(to: unlocked) { staged in
@@ -1720,7 +2025,7 @@ struct SatsumaTests {
             try expect(ToolID.compress.applies(to: [.gif]), "gif compress")
             try expect(!ToolID.mergePDF.applies(to: [.docx, .docx]), "docx merge")
             try expectEqual(ToolID.available(for: [.mp3]).count, 8)
-            try expectEqual(ToolID.available(for: [.pdf]).count, 6)
+            try expectEqual(ToolID.available(for: [.pdf]).count, 7)
         }
 
         runner.test("compression presets") {
@@ -1740,9 +2045,37 @@ struct SatsumaTests {
             for tool in ToolID.allCases {
                 try expect(NSImage(systemSymbolName: tool.symbol, accessibilityDescription: nil) != nil, "\(tool.rawValue) symbol \(tool.symbol)")
             }
+            for action in FileAction.allCases {
+                try expect(NSImage(systemSymbolName: action.symbol, accessibilityDescription: nil) != nil, "\(action.rawValue) symbol \(action.symbol)")
+            }
+            for action in AIAction.allCases {
+                try expect(NSImage(systemSymbolName: action.symbol, accessibilityDescription: nil) != nil, "\(action.rawValue) symbol \(action.symbol)")
+            }
             for category in FormatCategory.allCases {
                 try expect(NSImage(systemSymbolName: category.symbol, accessibilityDescription: nil) != nil, "\(category.rawValue) symbol")
             }
+        }
+
+        runner.test("wheel action icons are distinct within each file category") {
+            for format in FileFormat.allCases {
+                for mode in [WheelMode.convert, .tools, .actions, .ai] {
+                    let items = ActionRegistry.items(for: mode, formats: [format], ffmpegAvailable: true, bsdtarAvailable: true)
+                    let keys = items.map { $0.iconBadge ?? $0.symbol }
+                    try expectEqual(Set(keys).count, keys.count, "Duplicate icon in \(mode) for \(format)")
+                }
+            }
+        }
+
+        runner.test("narrow wedges use icons while wide wedges retain labels") {
+            let longAction = RadialItem(fileAction: .openTerminal)
+            let narrow = RadialGeometry(innerRadius: 59, outerRadius: 150, count: 18, quickCount: 3)
+            let wide = RadialGeometry(innerRadius: 82, outerRadius: 210, count: 6, quickCount: 3)
+            try expect(longAction.usesIconOnly(in: narrow, at: 0), "Crowded wedge should hide an overflowing label")
+            try expect(!longAction.usesIconOnly(in: wide, at: 0), "Roomy wedge should retain its label")
+            let mixed = RadialWheelView(items: [RadialItem(fileAction: .copyPath), longAction],
+                                        highlighted: nil, title: "FILE ACTIONS", emptyMessage: "", emptyDetail: "",
+                                        geometry: narrow)
+            try expect(mixed.iconOnly, "All wedges should switch to icons if one label does not fit")
         }
 
         runner.finish()

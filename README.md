@@ -35,7 +35,7 @@ Password-protected PDFs can be unlocked into a separate unprotected copy. The or
 | --- | --- | --- |
 | **Shift** | Convert | Convert to compatible formats |
 | **Shift + Option** | Tools | Open editors, compression, PDF tools, and more |
-| **Command** | File actions | Copy Path, Duplicate, Move, ZIP, and more |
+| **Command** or **Control** | File and privacy actions | Copy Path, Duplicate, Move, ZIP, redaction, protected-file access, and encryption |
 | **Option** | AI · Coming later | Shows planned actions; nothing runs |
 
 ZeroClick requires an **Apple silicon Mac with macOS 26 or later**. The downloadable app does **not** require Brisk, Xcode, or a Git clone. Some non-native media formats need optional `ffmpeg`; RAR decoding uses macOS `bsdtar`. This test build is ad-hoc signed, not Developer ID notarized, so macOS may ask you to approve opening it in **System Settings → Privacy & Security** on first launch.
@@ -43,7 +43,7 @@ ZeroClick requires an **Apple silicon Mac with macOS 26 or later**. The download
 ## What's inside
 
 - **190 conversion routes** across images, audio, video, documents, subtitles, and archives.
-- **32 local tools** for editing, redaction, compression, PDF pages, upscaling, and more.
+- **33 local tools** for editing, redaction, compression, PDF pages, local text recognition, upscaling, and more.
 - **Safe outputs** with collision-resistant names, staged writes, cancellation, and operation history capped at 50 entries.
 - **Private by design:** no account, cloud processing, telemetry, or AI backend.
 
@@ -53,7 +53,11 @@ ZeroClick requires an **Apple silicon Mac with macOS 26 or later**. The download
 2. Hold **Shift**. A radial menu appears around the cursor with the formats the selection can be converted to.
 3. Move over a format and release to convert. Copies are written next to the originals (or to the folder chosen in Settings).
 4. Hold **Shift + Option** instead to switch the radial menu to advanced tools (Compress, Crop, Trim, Merge PDFs, …). Settings can map this wheel to **Command** instead. The wheel shows tools relevant to the selected file category and greys out tools that cannot run on that selection. Releasing on an available tool opens its window with a live preview.
-5. Hold **Command** for local file actions. Control also maps to file actions, but a pre-held Control-click can open Finder’s context menu before dragging. Hold **Option** alone to see future AI actions marked “Coming later”; those actions cannot be selected.
+5. Hold **Command** for file and privacy actions. Control also maps to this wheel, but a pre-held Control-click can open Finder’s context menu before dragging. Hold **Option** alone to see future AI actions marked “Coming later”; those actions cannot be selected.
+
+Each active wheel reserves three wedges on its left side for the last successful action and two other most-used actions in that wheel. Until used, these are disabled placeholders. A remembered action stays visible but grey when it does not apply to the current files; cancelled and failed jobs do not affect the ranking.
+
+All wheels use the same size. Settings → Appearance → Wheel size adjusts them together; if one wedge cannot fit its label, the whole wheel switches to distinct icons or format badges. Hovering still shows the full action name in the center and accessibility label. The three left quick wedges have a separate outline and L/1/2 markers.
 
 Keyboard: when you open the wheel through the menu-bar **Convert Files…** picker, arrow keys choose an action, **Return** applies it, and **Escape** closes it. During a Finder drag, Finder owns keyboard focus; move the pointer over a wedge to highlight it, then release to choose.
 
@@ -85,15 +89,15 @@ Native frameworks are used first: ImageIO/Core Graphics for images, AVFoundation
 
 | Scope | Tools |
 | --- | --- |
-| Any file | Compress (Balanced/Strong, target size, resize), Edit metadata (view, edit, strip sensitive or all fields), Encrypt to `.aea` or `.dmg`, Decrypt supported protected files including older `.zclick` files |
-| Images | Edit photos, Add a background, Crop, Redact, Resize, Rotate, Create a PDF, Make a collage, Upscale |
-| Video | Trim, Split, Crop, Change speed, Join, Save frames, Redact |
-| Audio | Trim, Normalize volume, Convert channels, Bleep, Create an audio visualizer |
-| PDF | Merge, Organize pages, Split, Unlock protected PDF into a new copy |
-| ZIP | Unlock a password-protected archive into a new folder |
-| PNG | Hide a password-protected message in a copy, Reveal a hidden message |
+| Shift+Option · general | Compress (Balanced/Strong, target size, resize), Edit metadata (view, edit, strip sensitive or all fields) |
+| Shift+Option · images | Edit photos, Add a background, Crop, Resize, Rotate, Create a PDF, Make a collage, Upscale, Make searchable |
+| Shift+Option · video/audio | Trim, Split, Crop, Change speed, Join, Save frames, Normalize volume, Convert channels, Create an audio visualizer |
+| Shift+Option · PDF | Merge, Organize pages, Split, Make searchable |
+| Command/Control · privacy | Redact photo/video, Bleep audio, Hide/Reveal PNG message, Unlock PDF/ZIP, Encrypt to `.aea` or `.dmg`, Decrypt supported protected files including older `.zclick` files |
 
-The Shift+Option Tools wheel and Command file-actions wheel can encrypt a selected regular file as an Apple Encrypted Archive (`.aea`) or AES-256 encrypted disk image (`.dmg`); the format is shown before saving. Both currently support one file up to 2 GB, use a password, and create a separate copy. ZeroClick decrypts its `.aea` files and opens `.dmg` images read-only, ejects them, then saves a new copy. A `.dmg` can also be opened in Finder with its password and ejected normally. `.aea` needs a password of at least 20 UTF-8 bytes; `.dmg` needs at least 12. Older `.zclick` files remain decryptable, but new `.zclick` creation is no longer offered. That legacy format uses PBKDF2-HMAC-SHA256 and AES-GCM and had a 512 MB input limit. These formats do not automatically unlock arbitrary password-protected files. Keep the password: there is no recovery service. Native-format Finder encrypt/decrypt round trips passed with disposable files and unchanged originals. PNG message hiding uses OpenStego RandomLSB; editing, resizing, or re-saving the image may erase the message. None of these features uploads data.
+The Command/Control wheel can encrypt a selected regular file as an Apple Encrypted Archive (`.aea`) or AES-256 encrypted disk image (`.dmg`); the format is shown before saving. Both currently support one file up to 2 GB, use a password, and create a separate copy. ZeroClick decrypts its `.aea` files and opens `.dmg` images read-only, ejects them, then saves a new copy. A `.dmg` can also be opened in Finder with its password and ejected normally. `.aea` needs a password of at least 20 UTF-8 bytes; `.dmg` needs at least 12. Older `.zclick` files remain decryptable, but new `.zclick` creation is no longer offered. That legacy format uses PBKDF2-HMAC-SHA256 and AES-GCM and had a 512 MB input limit. These formats do not automatically unlock arbitrary password-protected files. Keep the password: there is no recovery service. Native-format Finder encrypt/decrypt round trips passed with disposable files and unchanged originals. PNG message hiding uses OpenStego RandomLSB; editing, resizing, or re-saving the image may erase the message. None of these features uploads data.
+
+**Make searchable** runs Apple's Vision text recognition on this Mac. Scan a supported image or PDF to see its page with selectable text overlaid, pinch at the area you want to enlarge, drag across individual letters, and press Command-C to copy the highlighted text. You can also find a word or phrase, or copy/edit all recognized text, without changing the source. An explicit **Save searchable PDF copy** button makes a separate PDF with invisible, selectable text over image-only pages. Edits in the temporary text window affect copied text; PDF export scans the source again to align text with the original page. Password-protected, annotated, form, or rotated PDF pages are rejected rather than silently flattened. Handwriting and unclear print may not recognize accurately. The disabled AI “OCR and explain” wedge is unrelated.
 
 ZeroClick’s PNG Hide/Reveal tool uses [OpenStego RandomLSB](docs/STEGANOGRAPHY_INTEROPERABILITY.md). Import its official JAR and install Java to exchange password-protected text with OpenStego on macOS, Windows, or Linux. The earlier ZeroClick-specific `ZCST01` PNG format is no longer supported; use an older ZeroClick build to read an existing image in that format. Other steganography tools and websites may use incompatible formats.
 
@@ -134,7 +138,7 @@ scripts/check.sh --fix  # apply swift-format fixes first
 
 ## Verification status
 
-The current local implementation passes 82 automated tests and produces an ad-hoc signed standalone `.brisk/Archives/ZeroClick.app`. Finder drag tests verified conversion, PDF Tools, file-actions, the disabled AI wheel, text redaction, PDF merge/split/organize/compression, ZIP extraction, protected PDF and ZIP unlocking, legacy `.zclick` decryption, native `.aea` and `.dmg` encryption/decryption, PNG message hiding/revealing, formatted Markdown PDF output, and the drag wheel after Finder relaunch. Upscaling's 2× preview and saved copy, two-image batch, per-image preview navigation, and cancellation also passed Finder checks. Category-relevant disabled actions remain visible and cannot run. VoiceOver was not physically checked, and only one display was connected during testing.
+The current local implementation passes 89 automated tests and produces an ad-hoc signed standalone `.brisk/Archives/ZeroClick.app`. Finder drag tests verified conversion, PDF Tools, file-actions, the disabled AI wheel, text redaction, PDF merge/split/organize/compression, ZIP extraction, protected PDF and ZIP unlocking, legacy `.zclick` decryption, native `.aea` and `.dmg` encryption/decryption, PNG message hiding/revealing, formatted Markdown PDF output, and the drag wheel after Finder relaunch. Upscaling's 2× preview and saved copy, two-image batch, per-image preview navigation, and cancellation also passed Finder checks. The user confirmed the reorganized wheels, outlined quick wedges, consistent icon-only display, OCR search, complete searchable PDF line, partial-letter copy/highlight alignment, and gesture-centered pinch zoom in Finder. VoiceOver was not physically checked, and only one display was connected during testing.
 
 ## Project layout
 

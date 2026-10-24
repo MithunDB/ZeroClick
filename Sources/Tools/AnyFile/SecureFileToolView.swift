@@ -103,7 +103,8 @@ struct SecureFileToolView: View {
         confirmation = ""
         close()
         if decrypting {
-            JobRunner.shared.run(title: "Decrypting file", detail: source.lastPathComponent, symbol: "lock.open") { progress in
+            JobRunner.shared.run(title: "Decrypting file", detail: source.lastPathComponent, symbol: "lock.open",
+                                 trackedAction: .tool(.decryptFile), trackedMode: .actions) { progress in
                 let directory = AppSettings.shared.outputLocation.directory(for: source)
                 let result: URL
                 if decryptAppleArchive {
@@ -121,7 +122,8 @@ struct SecureFileToolView: View {
             let fileExtension = selectedFormat == .appleArchive ? "aea" : "dmg"
             let destination = ConversionMatrix.uniqueURL(directory: directory,
                 baseName: source.lastPathComponent, suffix: "", ext: fileExtension)
-            JobRunner.shared.run(title: "Encrypting file", detail: source.lastPathComponent, symbol: "lock.doc") { progress in
+            JobRunner.shared.run(title: "Encrypting file", detail: source.lastPathComponent, symbol: "lock.doc",
+                                 trackedAction: .tool(.encryptFile), trackedMode: .actions) { progress in
                 let result: URL
                 switch selectedFormat {
                 case .appleArchive:

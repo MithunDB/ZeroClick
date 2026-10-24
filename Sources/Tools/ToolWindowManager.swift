@@ -77,7 +77,7 @@ final class ToolWindowManager: NSObject, NSWindowDelegate {
 
     static func windowClass(for tool: ToolID) -> WindowClass {
         switch tool {
-        case .compress, .resizeImage, .createPDF, .mergePDF, .splitPDF, .unlockPDF, .unlockZIP, .hideMessage, .revealMessage, .encryptFile, .decryptFile, .audioChannels, .rotateImage:
+        case .compress, .resizeImage, .createPDF, .makeSearchable, .mergePDF, .splitPDF, .unlockPDF, .unlockZIP, .hideMessage, .revealMessage, .encryptFile, .decryptFile, .audioChannels, .rotateImage:
             return .compact
         case .editMetadata, .normalizeAudio, .organizePDF, .createCollage, .joinVideos, .audioToVideo, .trimAudio, .redactAudio:
             return .standard
@@ -94,6 +94,8 @@ final class ToolWindowManager: NSObject, NSWindowDelegate {
             return NSSize(width: 620, height: 400)
         case .upscaleImage:
             return NSSize(width: 920, height: 620)
+        case .makeSearchable:
+            return NSSize(width: 900, height: 720)
         case .createPDF, .mergePDF, .unlockPDF, .unlockZIP, .hideMessage, .revealMessage, .encryptFile, .decryptFile:
             return NSSize(width: 680, height: 440)
         case .splitPDF, .audioChannels:
@@ -134,6 +136,7 @@ struct ToolRootView: View {
             case .upscaleImage: UpscaleImageToolView(session: session)
             case .rotateImage: RotateImageToolView(session: session)
             case .createPDF: CreatePDFToolView(session: session)
+            case .makeSearchable: MakeSearchableToolView(session: session)
             case .createCollage: CollageToolView(session: session)
             case .trimVideo: TrimVideoToolView(session: session)
             case .cropVideo: CropVideoToolView(session: session)
@@ -383,6 +386,9 @@ extension ToolSession {
     @MainActor
     func run(title: String, detail: String, work: @escaping (@escaping (Double) -> Void) async throws -> [URL]) {
         ToolWindowManager.shared.close(self)
-        JobRunner.shared.run(title: title, detail: detail, symbol: tool.symbol, work: work)
+        JobRunner.shared.run(title: title, detail: detail, symbol: tool.symbol,
+                             trackedAction: .tool(tool),
+                             trackedMode: ActionRegistry.privacyTools.contains(tool) ? .actions : .tools,
+                             work: work)
     }
 }

@@ -7,6 +7,8 @@ final class Job: ObservableObject, Identifiable {
     let title: String
     let detail: String
     let symbol: String
+    let trackedAction: RadialAction?
+    let trackedMode: WheelMode?
     @Published var progress: Double = 0
     @Published var status: Status = .waiting
     var outputs: [URL] = []
@@ -27,10 +29,13 @@ final class Job: ObservableObject, Identifiable {
         }
     }
 
-    init(title: String, detail: String, symbol: String = "arrow.triangle.2.circlepath") {
+    init(title: String, detail: String, symbol: String = "arrow.triangle.2.circlepath",
+         trackedAction: RadialAction? = nil, trackedMode: WheelMode? = nil) {
         self.title = title
         self.detail = detail
         self.symbol = symbol
+        self.trackedAction = trackedAction
+        self.trackedMode = trackedMode
     }
 }
 
@@ -83,7 +88,8 @@ final class JobRunner: ObservableObject {
             let destination = ConversionMatrix.outputURL(for: url, target: target, in: directory, existing: reserved)
             DiagnosticLog.log("destination \(destination.path)")
             reserved.insert(destination.lastPathComponent)
-            let job = Job(title: "Converting to \(target.displayName)", detail: url.lastPathComponent, symbol: target.category.symbol)
+            let job = Job(title: "Converting to \(target.displayName)", detail: url.lastPathComponent,
+                          symbol: target.category.symbol, trackedAction: .convert(target), trackedMode: .convert)
             enqueue(job) { progress in
                 let request = ConversionRequest(source: url, sourceFormat: source, target: target, destination: destination, progress: progress)
                 return [try await Engines.convert(request)]
@@ -148,8 +154,11 @@ final class JobRunner: ObservableObject {
         dismissAll()
     }
 
-    func run(title: String, detail: String, symbol: String = "arrow.triangle.2.circlepath", work: @escaping (@escaping (Double) -> Void) async throws -> [URL]) {
-        enqueue(Job(title: title, detail: detail, symbol: symbol), work: work)
+    func run(title: String, detail: String, symbol: String = "arrow.triangle.2.circlepath",
+             trackedAction: RadialAction? = nil, trackedMode: WheelMode? = nil,
+             work: @escaping (@escaping (Double) -> Void) async throws -> [URL]) {
+        enqueue(Job(title: title, detail: detail, symbol: symbol,
+                    trackedAction: trackedAction, trackedMode: trackedMode), work: work)
     }
 
     private func record(_ job: Job) {
@@ -164,6 +173,10 @@ final class JobRunner: ObservableObject {
         let entry = JobRecord(id: job.id, date: Date(), title: job.title, detail: job.detail, outcome: outcome, outputs: job.outputs, error: error)
         do { history = try JobHistory.append(entry) }
         catch { DiagnosticLog.log("could not save job history: \(error)") }
+        if let action = job.trackedAction, let mode = job.trackedMode {
+            do { try QuickActionHistory.record(action, in: mode, outcome: outcome) }
+            catch { DiagnosticLog.log("could not save quick-action history: \(error)") }
+        }
         if outcome != .cancelled { JobNotifications.post(entry) }
     }
 

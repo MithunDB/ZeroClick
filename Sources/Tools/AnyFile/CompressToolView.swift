@@ -122,7 +122,8 @@ struct CompressToolView: View {
             let format = Compressor.outputFormat(for: url, targetBytes: target)
             let base = ConversionMatrix.strippedBaseName(url.lastPathComponent)
             let destination = ConversionMatrix.uniqueURL(directory: settings.outputLocation.directory(for: url), baseName: base, suffix: "compressed", ext: format.fileExtension)
-            JobRunner.shared.run(title: "Compressing", detail: "\(url.lastPathComponent)", symbol: ToolID.compress.symbol) { progress in
+            JobRunner.shared.run(title: "Compressing", detail: "\(url.lastPathComponent)", symbol: ToolID.compress.symbol,
+                                 trackedAction: .tool(.compress), trackedMode: .tools) { progress in
                 return [try await OutputWriter.writeAsync(to: destination) { staged in
                     try await Compressor.compress(url, preset: preset, resizeLongEdge: resize, targetBytes: target, to: staged, progress: progress)
                 }]

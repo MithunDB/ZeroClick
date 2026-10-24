@@ -1,7 +1,7 @@
 import Foundation
 import PDFKit
 
-enum WheelMode: Equatable {
+enum WheelMode: Hashable {
     case convert
     case tools
     case actions
@@ -41,8 +41,8 @@ enum FileAction: String, CaseIterable, Hashable {
         case .reveal: return "folder"
         case .openTerminal: return "terminal"
         case .duplicate: return "plus.square.on.square"
-        case .move: return "folder.badge.arrow.forward"
-        case .airDrop: return "airdrop"
+        case .move: return "folder.badge.plus"
+        case .airDrop: return "antenna.radiowaves.left.and.right"
         case .createZip: return "archivebox"
         case .extractZip: return "archivebox.fill"
         case .encrypt: return "lock.doc"
@@ -52,6 +52,21 @@ enum FileAction: String, CaseIterable, Hashable {
 }
 
 enum ActionRegistry {
+    static let privacyTools: [ToolID] = [
+        .redactImage, .redactVideo, .redactAudio,
+        .hideMessage, .revealMessage, .unlockPDF, .unlockZIP,
+        .encryptFile, .decryptFile
+    ]
+
+    static func displayItems(for mode: WheelMode, formats: [FileFormat], urls: [URL] = [],
+                             historyURL: URL = QuickActionHistory.defaultURL) -> [RadialItem] {
+        let standard = items(for: mode, formats: formats, urls: urls)
+        guard mode != .ai else { return standard }
+        let quick = QuickActionHistory.shortcuts(for: mode, among: standard, from: historyURL)
+            .map { RadialItem(quickSlot: $0.0, item: $0.1) }
+        return standard + quick
+    }
+
     static func items(for mode: WheelMode, formats: [FileFormat], urls: [URL] = [],
                       ffmpegAvailable: Bool? = nil, bsdtarAvailable: Bool? = nil) -> [RadialItem] {
         switch mode {
@@ -81,12 +96,7 @@ enum ActionRegistry {
             let available = Set(availableTools(for: formats, urls: urls))
             let categories = Set(formats.map(\.category))
             let candidates = ToolID.allCases.filter { tool in
-                !categories.isDisjoint(with: tool.categories)
-            }
-            if categories.isEmpty {
-                return [ToolID.encryptFile, .decryptFile].map { tool in
-                    RadialItem(tool: tool, disabledReason: available.contains(tool) ? nil : "Not for selection")
-                }
+                !privacyTools.contains(tool) && !categories.isDisjoint(with: tool.categories)
             }
             return candidates.map { tool in
                 if tool == .upscaleImage && !UpscaleEngine.isAvailable {
@@ -97,8 +107,24 @@ enum ActionRegistry {
             }
         case .actions:
             let available = Set(availableActions(for: formats, urls: urls))
-            return FileAction.allCases.map { action in
+            let categories = Set(formats.map(\.category))
+            let baseActions = FileAction.allCases.filter { action in
+                switch action {
+                case .encrypt, .decrypt: return false // The tool windows own these flows.
+                case .extractZip: return categories.contains(.archive)
+                default: return true
+                }
+            }
+            let fileItems = baseActions.map { action in
                 RadialItem(fileAction: action, disabledReason: available.contains(action) ? nil : "Not for selection")
+            }
+            let availablePrivacy = Set(availableTools(for: formats, urls: urls))
+            let candidates = privacyTools.filter { tool in
+                if tool == .encryptFile || tool == .decryptFile { return true }
+                return !categories.isDisjoint(with: tool.categories)
+            }
+            return fileItems + candidates.map { tool in
+                RadialItem(tool: tool, disabledReason: availablePrivacy.contains(tool) ? nil : "Not for selection")
             }
         case .ai:
             return AIAction.allCases.map(RadialItem.init(ai:))

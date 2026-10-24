@@ -98,6 +98,7 @@ struct PNGMessageToolView: View {
                 do {
                     revealed = try await OpenStegoBridge.reveal(from: source, password: enteredPassword)
                     errorMessage = nil
+                    try? QuickActionHistory.recordSuccess(.tool(.revealMessage), in: .actions)
                 } catch is CancellationError {
                     revealed = nil
                 } catch {

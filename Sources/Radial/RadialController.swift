@@ -109,9 +109,10 @@ final class RadialController: DragMonitorDelegate {
     }
 
     private func clampedCenter(_ point: NSPoint, in frame: NSRect, radius: CGFloat) -> NSPoint {
-        NSPoint(
-            x: min(max(point.x, frame.minX + radius), frame.maxX - radius),
-            y: min(max(point.y, frame.minY + radius), frame.maxY - radius)
+        let limit = max(0, min(radius, frame.width / 2 - 12, frame.height / 2 - 12))
+        return NSPoint(
+            x: min(max(point.x, frame.minX + limit), frame.maxX - limit),
+            y: min(max(point.y, frame.minY + limit), frame.maxY - limit)
         )
     }
 
@@ -148,7 +149,7 @@ final class RadialController: DragMonitorDelegate {
             return
         }
         view.subtitle = count == 1 ? urls[0].lastPathComponent : "\(count) files"
-        view.items = ActionRegistry.items(for: mode, formats: formats, urls: urls)
+        view.items = ActionRegistry.displayItems(for: mode, formats: formats, urls: urls)
         view.emptyMessage = mode == .ai ? "AI · Coming later" : (mode == .tools ? "No tools for this selection" : "No conversions available")
     }
 
@@ -168,7 +169,7 @@ final class RadialController: DragMonitorDelegate {
                 ToolWindowManager.shared.open(tool, files: selectedURLs)
             case .fileAction(let action):
                 FileActionRunner.perform(action, with: selectedURLs)
-            case .ai:
+            case .ai, .quickPlaceholder:
                 break
             }
         }

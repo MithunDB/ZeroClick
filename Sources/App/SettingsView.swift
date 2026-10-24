@@ -111,6 +111,17 @@ struct SettingsView: View {
             .pickerStyle(.segmented)
         }
         Section {
+            HStack {
+                Text("Wheel size")
+                Slider(value: $settings.wheelRadius, in: 150...260, step: 5)
+                Text("\(Int(settings.wheelRadius))")
+                    .monospacedDigit()
+                    .frame(width: 36, alignment: .trailing)
+            }
+        } footer: {
+            Text("Applies to every action wheel. Small wedges show icons when labels cannot fit.")
+        }
+        Section {
             Picker("Progress", selection: $settings.progressStyle) {
                 ForEach(ProgressStyle.allCases) { Text($0.title).tag($0) }
             }

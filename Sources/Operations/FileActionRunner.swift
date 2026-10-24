@@ -1,6 +1,14 @@
 import AppKit
 import Foundation
 
+private final class FileActionShareTracker: NSObject, NSSharingServiceDelegate {
+    static let shared = FileActionShareTracker()
+
+    func sharingService(_ sharingService: NSSharingService, didShareItems items: [Any]) {
+        try? QuickActionHistory.recordSuccess(.fileAction(.airDrop), in: .actions)
+    }
+}
+
 @MainActor
 enum FileActionRunner {
     static func perform(_ action: FileAction, with urls: [URL]) {
@@ -8,9 +16,12 @@ enum FileActionRunner {
         switch action {
         case .copyPath:
             NSPasteboard.general.clearContents()
-            NSPasteboard.general.setString(urls.map(\.path).joined(separator: "\n"), forType: .string)
+            if NSPasteboard.general.setString(urls.map(\.path).joined(separator: "\n"), forType: .string) {
+                try? QuickActionHistory.recordSuccess(.fileAction(.copyPath), in: .actions)
+            }
         case .reveal:
             NSWorkspace.shared.activateFileViewerSelecting(urls)
+            try? QuickActionHistory.recordSuccess(.fileAction(.reveal), in: .actions)
         case .openTerminal:
             let terminal = URL(fileURLWithPath: "/System/Applications/Utilities/Terminal.app")
             let folders = Array(Set(urls.map { url in
@@ -18,11 +29,16 @@ enum FileActionRunner {
                 return FileManager.default.fileExists(atPath: url.path, isDirectory: &isDirectory) && isDirectory.boolValue
                     ? url : url.deletingLastPathComponent()
             }))
-            NSWorkspace.shared.open(folders, withApplicationAt: terminal, configuration: NSWorkspace.OpenConfiguration())
+            NSWorkspace.shared.open(folders, withApplicationAt: terminal, configuration: NSWorkspace.OpenConfiguration()) { _, error in
+                if error == nil {
+                    try? QuickActionHistory.recordSuccess(.fileAction(.openTerminal), in: .actions)
+                }
+            }
         case .duplicate:
             for url in urls {
                 let destination = duplicateDestination(for: url)
-                JobRunner.shared.run(title: "Duplicating", detail: url.lastPathComponent, symbol: "plus.square.on.square") { progress in
+                JobRunner.shared.run(title: "Duplicating", detail: url.lastPathComponent, symbol: "plus.square.on.square",
+                                     trackedAction: .fileAction(.duplicate), trackedMode: .actions) { progress in
                     let staged = destination.deletingLastPathComponent().appendingPathComponent(".zeroclick-\(UUID().uuidString)")
                     do {
                         try Task.checkCancellation()
@@ -48,7 +64,8 @@ enum FileActionRunner {
                 guard response == .OK, let folder = panel.url else { return }
                 for url in urls {
                     let destination = uniqueDestination(for: url, in: folder)
-                    JobRunner.shared.run(title: "Moving", detail: url.lastPathComponent, symbol: "folder.badge.arrow.forward") { progress in
+                    JobRunner.shared.run(title: "Moving", detail: url.lastPathComponent, symbol: "folder.badge.arrow.forward",
+                                         trackedAction: .fileAction(.move), trackedMode: .actions) { progress in
                         try Task.checkCancellation()
                         try FileManager.default.moveItem(at: url, to: destination)
                         progress(1)
@@ -57,10 +74,14 @@ enum FileActionRunner {
                 }
             }
         case .airDrop:
-            NSSharingService(named: .sendViaAirDrop)?.perform(withItems: urls)
+            if let service = NSSharingService(named: .sendViaAirDrop) {
+                service.delegate = FileActionShareTracker.shared
+                service.perform(withItems: urls)
+            }
         case .createZip:
             let destination = ArchiveActionRunner.zipDestination(for: urls)
-            JobRunner.shared.run(title: "Creating ZIP", detail: destination.lastPathComponent, symbol: "archivebox") { progress in
+            JobRunner.shared.run(title: "Creating ZIP", detail: destination.lastPathComponent, symbol: "archivebox",
+                                 trackedAction: .fileAction(.createZip), trackedMode: .actions) { progress in
                 let result = try await ArchiveActionRunner.createZip(from: urls, to: destination)
                 progress(1)
                 return [result]
@@ -72,7 +93,8 @@ enum FileActionRunner {
                 return
             }
             let destination = ArchiveActionRunner.extractionDestination(for: source)
-            JobRunner.shared.run(title: "Extracting ZIP", detail: source.lastPathComponent, symbol: "archivebox.fill") { progress in
+            JobRunner.shared.run(title: "Extracting ZIP", detail: source.lastPathComponent, symbol: "archivebox.fill",
+                                 trackedAction: .fileAction(.extractZip), trackedMode: .actions) { progress in
                 let result = try await ArchiveActionRunner.extractZip(source, to: destination)
                 progress(1)
                 return [result]
