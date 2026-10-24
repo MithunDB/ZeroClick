@@ -9,24 +9,24 @@
 <p align="center">A local, menu-bar file utility for Apple silicon Macs.</p>
 
 <p align="center">
-  <a href="https://github.com/MithunDB/ZeroClick/releases">⬇️ Download ZeroClick.app</a>
+  <a href="https://github.com/MithunDB/ZeroClick/releases/latest/download/ZeroClick-macOS-arm64.zip">⬇️ Download ZeroClick.app</a>
   &nbsp;·&nbsp; <a href="#quick-start">Quick start</a>
   &nbsp;·&nbsp; <a href="#whats-inside">What's inside</a>
 </p>
 
-> **Private local release:** The downloadable build includes the tested local tools, protected ZIP unlocking, ZeroClick-created encrypted files, PNG message hiding, local image upscaling, and visible disabled actions. The AI wheel is a disabled preview.
+> **Local macOS release:** The downloadable build includes the tested local tools, protected ZIP unlocking, ZeroClick-created encrypted files, PNG message hiding, local image upscaling, and visible disabled actions. The AI wheel is a disabled preview.
 
 **Upscale images** appears in the Shift+Option Tools wheel. It runs on the Mac with one bundled illustration-oriented 4× model; optional `.param`/`.bin` model pairs can be imported into Application Support and are not included in the app package. See [the upscaling audit](docs/UPSCALING_AUDIT.md) for the model and dependency notices.
 
 ZeroClick works from a Finder drag. It reads and writes files locally, with no uploads or telemetry. Conversions and editing tools save new copies; only the explicit **Move** action relocates a selected file.
 
-ZeroClick is a private local derivative of Satsuma, an open-source reimplementation of the Tangerine workflow: 190 conversion options across images, video, audio, documents, subtitles and archives, and 32 advanced file tools.
+ZeroClick is a local derivative of Satsuma, an open-source reimplementation of the Tangerine workflow: 190 conversion options across images, video, audio, documents, subtitles and archives, and 33 advanced file tools.
 
 Password-protected PDFs can be unlocked into a separate unprotected copy. The original stays encrypted.
 
 ## Quick start
 
-1. For a test build, open the latest successful [Package ZeroClick run](https://github.com/MithunDB/ZeroClick/actions/workflows/release.yml) and download its **ZeroClick-macOS-arm64** artifact. When a formal release is published, use its **ZeroClick-macOS-arm64.zip** asset on the [Releases page](https://github.com/MithunDB/ZeroClick/releases). The automatic GitHub “Source code” archives contain source, not the app.
+1. [Download the latest ZeroClick.app ZIP](https://github.com/MithunDB/ZeroClick/releases/latest/download/ZeroClick-macOS-arm64.zip) from GitHub Releases. The automatic GitHub “Source code” archives contain source, not the app.
 2. Unzip it, then move **ZeroClick.app** to Applications.
 3. Open the app. It lives in the menu bar, so it will not add a Dock icon.
 4. Start dragging a file in Finder and hold a modifier to show a wheel:
@@ -38,7 +38,7 @@ Password-protected PDFs can be unlocked into a separate unprotected copy. The or
 | **Command** or **Control** | File and privacy actions | Copy Path, Duplicate, Move, ZIP, redaction, protected-file access, and encryption |
 | **Option** | AI · Coming later | Shows planned actions; nothing runs |
 
-ZeroClick requires an **Apple silicon Mac with macOS 26 or later**. The downloadable app does **not** require Brisk, Xcode, or a Git clone. Some non-native media formats need optional `ffmpeg`; RAR decoding uses macOS `bsdtar`. This test build is ad-hoc signed, not Developer ID notarized, so macOS may ask you to approve opening it in **System Settings → Privacy & Security** on first launch.
+ZeroClick requires an **Apple silicon Mac with macOS 26 or later**. The downloadable app does **not** require Brisk, Xcode, or a Git clone. Some non-native media formats need optional `ffmpeg`; RAR decoding uses macOS `bsdtar`. This build is ad-hoc signed, not Developer ID notarized, so macOS may ask you to approve opening it in **System Settings → Privacy & Security** on first launch.
 
 ## What's inside
 
@@ -160,4 +160,4 @@ No network access, no telemetry, no analytics. Files are read from disk, process
 
 ## Upstream and license
 
-ZeroClick is a private local derivative of [Satsuma](https://github.com/plyght/satsuma), created by plyght. The upstream MIT license and copyright notice remain in `LICENSE`. This is not an official Satsuma build.
+ZeroClick is a local derivative of [Satsuma](https://github.com/plyght/satsuma), created by plyght. The upstream MIT license and copyright notice remain in `LICENSE`. This is not an official Satsuma build.
