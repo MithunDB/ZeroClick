@@ -1,0 +1,49 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="theme-color" content="#101116">
+  <meta name="description" content="ZeroClick is a local file utility for Apple silicon Macs. Drag a file, choose an action, and keep moving.">
+  <title>ZeroClick — Drop a file. Keep moving.</title>
+  <link rel="icon" type="image/png" href="assets/icon.png">
+  <link rel="stylesheet" href="styles.css">
+  <script src="app.js" defer></script>
+</head>
+<body>
+  <a class="skip" href="#main">Skip to content</a>
+  <header class="site-header">
+    <a class="brand" href="#top" aria-label="ZeroClick home"><img src="assets/icon.png" alt="" width="36" height="36"><span>ZeroClick</span></a>
+    <nav aria-label="Main navigation"><a href="#features">Features</a><a href="#how">How it works</a><a href="https://github.com/MithunDB/ZeroClick">GitHub</a></nav>
+    <a class="nav-download" href="https://github.com/MithunDB/ZeroClick/releases/latest/download/ZeroClick-macOS-arm64.zip">Download <span aria-hidden="true">↗</span></a>
+  </header>
+  <main id="main">
+    <section id="top" class="hero">
+      <div class="hero-copy">
+        <p class="eyebrow"><span class="pulse" aria-hidden="true"></span> Made for your Mac. Made to stay local.</p>
+        <h1>Drop a file.<br><em>Keep moving.</em></h1>
+        <p class="lead">Convert, edit, search, protect, and upscale files from one contextual wheel. ZeroClick works where your files already are: on your Mac.</p>
+        <div class="hero-actions"><a class="button primary" href="https://github.com/MithunDB/ZeroClick/releases/latest/download/ZeroClick-macOS-arm64.zip">Download for macOS <span aria-hidden="true">↓</span></a><a class="button ghost" href="#how">See how it works <span aria-hidden="true">↘</span></a></div>
+        <p class="requirement">Apple silicon · macOS 26+ · Free and open source</p>
+      </div>
+      <div class="hero-demo" aria-label="Interactive preview of ZeroClick's action wheel">
+        <div class="demo-topline"><span class="demo-dot"></span><span>INTERACTIVE PREVIEW</span><span class="demo-file">sample-image.png</span></div>
+        <div class="demo-stage"><div class="demo-halo"></div><div id="wheel" class="wheel" role="group" aria-label="Preview actions"></div><div class="wheel-center"><img src="assets/icon.png" alt="" width="36" height="36"><strong id="wheel-title">Convert</strong><small id="wheel-subtitle">Choose an action</small></div></div>
+        <div class="mode-tabs" role="group" aria-label="Choose wheel mode"><button type="button" class="mode active" data-mode="shift" aria-pressed="true"><kbd>⇧</kbd> Convert</button><button type="button" class="mode" data-mode="tools" aria-pressed="false"><kbd>⇧⌥</kbd> Tools</button><button type="button" class="mode" data-mode="actions" aria-pressed="false"><kbd>⌘</kbd> Actions</button><button type="button" class="mode" data-mode="ai" aria-pressed="false"><kbd>⌥</kbd> AI</button></div>
+        <p class="demo-caption" id="mode-description">Hold Shift while dragging a file in Finder.</p>
+        <p class="demo-disclaimer">Illustration only. This page never processes your files.</p>
+      </div>
+    </section>
+    <section class="proof" aria-label="ZeroClick at a glance"><div><strong>190</strong><span>conversion routes</span></div><div><strong>33</strong><span>local tools</span></div><div><strong>0</strong><span>uploads or telemetry</span></div></section>
+    <section id="features" class="section features"><div class="section-heading"><p class="eyebrow">One wheel. A lot of possibilities.</p><h2>The right tool, right at the file.</h2><p>Open a focused window when an action needs choices. Save a new copy when you are done.</p></div><div class="feature-grid">
+      <article class="feature-card feature-ocr"><div class="card-art ocr-art"><span class="art-kicker">MAKE SEARCHABLE</span><p>SELECT THE WORDS<br><mark>RIGHT IN THE IMAGE.</mark></p><span class="art-cursor">⌁</span></div><div class="card-copy"><span class="feature-number">01 / READ</span><h3>Text you can actually use.</h3><p>Recognize text in images and PDFs on your Mac. Select letters, search, copy, or save a separate searchable PDF.</p></div></article>
+      <article class="feature-card feature-redact"><div class="card-art redact-art"><span class="art-kicker">REDACT</span><div class="redact-lines"><span>CONFIDENTIAL</span><span class="blocked"></span><span>KEEP IT PRIVATE</span></div><span class="art-tag">SOLID · BLUR · PIXELATE</span></div><div class="card-copy"><span class="feature-number">02 / PROTECT</span><h3>Privacy in your hands.</h3><p>Review suggested areas, adjust each layer, then export a redacted copy. Solid cover is there for sensitive text.</p></div></article>
+      <article class="feature-card feature-upscale"><div class="card-art upscale-art"><span class="art-kicker">UPSCALE</span><div class="pixel-grid" aria-hidden="true"></div><strong>2× <span>→</span> 8×</strong><span class="art-tag">LOCAL IMAGE MODELS</span></div><div class="card-copy"><span class="feature-number">03 / ENHANCE</span><h3>More pixels. More control.</h3><p>Choose a model, preview the result, and upscale one image or a batch. Output limits help keep your Mac responsive.</p></div></article>
+    </div></section>
+    <section id="how" class="section how"><div class="section-heading"><p class="eyebrow">The flow</p><h2>Three moves. Back to work.</h2></div><ol class="steps"><li><span>01</span><h3>Drag</h3><p>Pick up a file in Finder. You can also open a file from ZeroClick’s menu-bar picker.</p></li><li><span>02</span><h3>Choose</h3><p>Hold Shift, Shift+Option, Command, or Option to see the corresponding wheel.</p></li><li><span>03</span><h3>Save</h3><p>Choose an available action. ZeroClick writes a new copy with a collision-safe name.</p></li></ol></section>
+    <section class="local"><div><p class="eyebrow">Private by design</p><h2>Your files stay <em>your files.</em></h2><p>Processing happens locally. No account, no cloud processing, no telemetry. The AI wheel is visible but disabled—marked “Coming later.”</p><a href="https://github.com/MithunDB/ZeroClick#whats-inside">Explore the full feature list <span aria-hidden="true">↗</span></a></div><div class="local-icon" aria-hidden="true"><span>◈</span><small>ON YOUR MAC</small></div></section>
+    <section class="download-section"><img src="assets/icon.png" alt="" width="76" height="76"><p class="eyebrow">Ready when you are</p><h2>Keep your workflow moving.</h2><p>Download the standalone macOS app. No Xcode or Git clone required.</p><a class="button primary" href="https://github.com/MithunDB/ZeroClick/releases/latest/download/ZeroClick-macOS-arm64.zip">Download ZeroClick.app <span aria-hidden="true">↓</span></a><small>Apple silicon · macOS 26+ · Ad-hoc signed; macOS may ask you to approve the first launch in Privacy &amp; Security.</small></section>
+  </main>
+  <footer><a class="brand" href="#top"><img src="assets/icon.png" alt="" width="28" height="28"><span>ZeroClick</span></a><p>Based on the open-source Satsuma project.</p><div><a href="https://github.com/MithunDB/ZeroClick">Source</a><a href="https://github.com/MithunDB/ZeroClick/releases/latest">Releases</a><a href="https://github.com/MithunDB/ZeroClick/blob/main/LICENSE">License</a></div></footer>
+</body>
+</html>

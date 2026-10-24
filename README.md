@@ -10,6 +10,7 @@
 
 <p align="center">
   <a href="https://github.com/MithunDB/ZeroClick/releases/latest/download/ZeroClick-macOS-arm64.zip">⬇️ Download ZeroClick.app</a>
+  &nbsp;·&nbsp; <a href="https://mithundb.github.io/ZeroClick/">Website</a>
   &nbsp;·&nbsp; <a href="#quick-start">Quick start</a>
   &nbsp;·&nbsp; <a href="#whats-inside">What's inside</a>
 </p>
